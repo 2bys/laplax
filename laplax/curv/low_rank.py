@@ -26,7 +26,7 @@ def scalar_plus_low_rank_invert(U, S, scalar):
 def set_prob_predictive_with_low_rank(
     model_fn, cov_scale, params_flat, inflate_params, low_rank_terms, **kwargs
 ):
-    rng = jax.random.PRNGKey(0)
+    rng = jax.random.key(0)
     n_weight_samples = 100
     n_params = low_rank_terms["U"].shape[0]
     params_true = deepcopy(params_flat)

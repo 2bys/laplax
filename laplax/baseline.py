@@ -24,7 +24,7 @@ import jax.numpy as jnp
 
 
 def set_prob_predictive_with_input_perturbations(model, cov_scale, input_shape):
-    rng = jax.random.PRNGKey(0)
+    rng = jax.random.key(0)
     n_weight_samples = 10
     # input_shape = (256, 20) # ...
     mc_samples = cov_scale * jax.random.normal(rng, (n_weight_samples, *input_shape))
@@ -83,7 +83,7 @@ def set_prob_predictive_with_weight_perturbations(  # noqa: PLR0913, PLR0917
     param_access: Callable,
     param_set: Callable,
     n_weight_samples: int = 10,
-    rng: jax.random.PRNGKey = jax.random.PRNGKey(0),  # noqa: B008
+    rng: jax.random.key = jax.random.key(0),  # noqa: B008
 ):
     """Return prob-predictions for weight perturbations."""
     keys = jax.random.split(rng, len(param_shapes))

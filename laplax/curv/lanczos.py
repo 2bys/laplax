@@ -9,7 +9,7 @@ from laplax.curv.util import flatten_pytree
 
 
 def lanczos_random_init(shape: tuple) -> jax.Array:
-    rng = jax.random.PRNGKey(1743798)
+    rng = jax.random.key(1743798)
     return jax.random.normal(rng, shape)
 
 
@@ -40,8 +40,8 @@ def lanczos_isqrt_full_reortho(
 
     Example inputs:
     >>> n = 100
-    >>> A = jax.random.normal(jax.random.PRNGKey(0), (n, n))  # Example linear operator
-    >>> b = jax.random.normal(jax.random.PRNGKey(1), (A.shape[0],), dtype=jnp.float32)
+    >>> A = jax.random.normal(jax.random.key(0), (n, n))  # Example linear operator
+    >>> b = jax.random.normal(jax.random.key(1), (A.shape[0],), dtype=jnp.float32)
     >>> lanczos_isqrt_full_reortho(A, b, maxiter=100, tol=1e-6)
     """
     # Convert b to a JAX array and normalize
