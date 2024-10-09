@@ -1,5 +1,10 @@
 import sys
 import os
+from jax.experimental.sparse import BCOO
+import jax
+from scipy.sparse import csr_matrix
+import pickle
+
 sys.path.append(os.path.abspath(os.path.join(os.getcwd(), '..')))
 from helper import get_sinusoid_example
 import matplotlib.pyplot as plt
@@ -10,7 +15,7 @@ from jaxtyping import PyTree
 
 # laplacestuff
 from functools import partial
-from laplax.curv.full import estimate_hessian, estimate_hessian_with_hvp, flatten_hessian, cov_scale_full_hessian
+from laplax.curv.full import estimate_hessian, todense, flatten_hessian, cov_scale_full_hessian, hvp
 from laplax.eval.push_forward import create_mc_predictions_for_data_point_fn
 
 # flax for training, optax for optimization
@@ -62,10 +67,14 @@ def update(params, opt_state, X, y, model, optimizer):
 
 # Training loop
 # Assuming `train_loader` is a generator that yields (X, y) batches
-def train_model(train_loader, n_epochs, rng_key):
+
+def init_model(rng_key):
     rng, init_rng = random.split(rng_key)
     model, params = create_model(init_rng)
+    return model, params
 
+
+def train_model(train_loader, n_epochs, model, params):
     optimizer = optax.adam(learning_rate=1e-2)
     opt_state = optimizer.init(params)
 
@@ -73,14 +82,22 @@ def train_model(train_loader, n_epochs, rng_key):
         for X, y in train_loader:
             params, opt_state, _ = update(params, opt_state, X, y, model, optimizer)
             # You can log the loss here if you want
-    return model, params
+    return params
 
 n_epochs = 10
 rng_key = random.key(711)
-model, final_params = train_model(train_loader, n_epochs, rng_key)
+model, params = init_model(rng_key)
+#final_params = train_model(train_loader, n_epochs, model, params)
 
-hessian_old = estimate_hessian(full_fn, final_params, (X_train, y_train))
-hessian_new = estimate_hessian_with_hvp(full_fn, final_params, (X_train, y_train))
-flat_hessian = flatten_hessian(hessian, final_params)
+with open('model_params.pkl', 'rb') as f:
+    final_params = pickle.load(f)
 
-assert
+loss_fn = lambda y_pred, y_true: jnp.mean((y_pred - y_true) ** 2) # noqa: E731
+model_fn = lambda p, x: model.apply(p, x)  # noqa: E731, PLW0108
+full_fn = lambda p, data: loss_fn(model_fn(p, data[0]), data[1])
+
+hessian_dense = todense(lambda v: hvp(full_fn, final_params, (X_train, y_train), v), len([p for param in jax.tree.flatten(final_params)[0] for p in param]))
+flat_hessian_new = flatten_hessian(hessian_dense, final_params)
+#TODO: training speichern
+
+assert jnp.allclose(hessian_dense, flat_hessian_new)

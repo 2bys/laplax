@@ -4,8 +4,35 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import PyTree
-
+from jax import jvp, grad
 from laplax.curv.cov import prec_to_scale
+from laplax.curv.util import get_inflate_pytree_fn, flatten_pytree
+
+
+def hvp(fn:callable, params, data, v):
+    """Compute jacobian vector product of model function.
+
+    Args:
+        fn: The function to estimate the Hessian of.
+        funcion_input: The parameters at which to estimate the Hessian.
+        v: The vector o calculate the hvp with
+    Returns:
+        The hessian vector prodct
+    """
+
+    """gradient with respect to model parameters"""
+    # get v in tree structure
+    flat_values, structure, shapes = flatten_pytree(params)
+    inflate = get_inflate_pytree_fn(structure, shapes)
+    new_v = inflate(v)
+
+    grad_fn = lambda x: grad(fn)(x, data)
+    return jvp(grad_fn, (params,), (new_v,))[1]
+
+
+def todense(mvp, shape):
+    return jax.vmap(mvp)(jnp.eye(shape))
+
 
 
 def flatten_hessian(hessian_pytree: PyTree, params_pytree: PyTree) -> jax.Array:
