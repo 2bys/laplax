@@ -4,13 +4,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import PyTree
-from jax import jvp, grad
+from jax import jvp, grad, jacfwd, jacrev
 from laplax.curv.cov import prec_to_scale
 from laplax.curv.util import get_inflate_pytree_fn, flatten_pytree
 
 
 def hvp(fn:callable, params, data, v):
-    """Compute jacobian vector product of model function.
+    """Compute hessian vector product of model function.
 
     Args:
         fn: The function to estimate the Hessian of.
@@ -26,8 +26,10 @@ def hvp(fn:callable, params, data, v):
     inflate = get_inflate_pytree_fn(structure, shapes)
     new_v = inflate(v)
 
-    grad_fn = lambda x: grad(fn)(x, data)
-    return jvp(grad_fn, (params,), (new_v,))[1]
+    fn_params = lambda x: fn(x, data)
+
+    return jacfwd(jacrev(fn_params))(new_v)
+
 
 
 def todense(mvp, shape):
