@@ -9,7 +9,7 @@ from laplax.curv.cov import prec_to_scale
 from laplax.curv.util import get_inflate_pytree_fn, flatten_pytree
 
 
-def hvp(fn:callable, params, data):
+def hvp(fn: callable, params, data):
     """Compute hessian vector product of model function.
 
     Args:
@@ -19,6 +19,7 @@ def hvp(fn:callable, params, data):
     Returns:
         The hessian vector prodct
     """
+
     fn_params = lambda x: fn(x, data)
     return jacfwd(jacrev(fn_params))
 
@@ -48,7 +49,7 @@ def flatten_hessian(hessian_pytree: PyTree, params_pytree: PyTree) -> jax.Array:
             jnp.concatenate(
                 [
                     arr.reshape(np.prod(p.shape), -1)
-                    for arr in flatten_tree[i * n_parts : (i + 1) * n_parts]
+                    for arr in flatten_tree[i * n_parts: (i + 1) * n_parts]
                 ],
                 axis=1,
             )
