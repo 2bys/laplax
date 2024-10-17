@@ -9,7 +9,7 @@ from laplax.curv.cov import prec_to_scale
 from laplax.curv.util import get_inflate_pytree_fn, flatten_pytree
 
 
-def hvp(fn: callable, params, data):
+def hvp(fn:callable, params, data, v):
     """Compute hessian vector product of model function.
 
     Args:
@@ -20,12 +20,25 @@ def hvp(fn: callable, params, data):
         The hessian vector prodct
     """
 
-    fn_params = lambda x: fn(x, data)
-    return jacfwd(jacrev(fn_params))
+    """gradient with respect to model parameters"""
+    # get v in tree structure
+    flat_values, structure, shapes = flatten_pytree(params)
+    inflate = get_inflate_pytree_fn(structure, shapes)
+    new_v = inflate(v)
+
+    grad_fn = lambda x: fn(x, data)
+    return jvp(grad(grad_fn), (params,), (new_v,))[1]
+    #return grad(lambda x: jnp.vdot(grad(grad_fn)(x), v))(flat_values)
 
 
-def to_dense(mvp, params):
-    return mvp(params)
+def to_dense(mvp, shape):
+    return jax.vmap(mvp)(jnp.eye(shape))
+
+#TODO: better name
+def flatten_hessian_pytree(hessian_pytree: PyTree, params_pytree: PyTree):
+    tree_flatten = jax.tree_util.tree_flatten(hessian_pytree)[0]
+    tree_flatten = [t.reshape(-1, t.shape[-1]) for t in tree_flatten]
+    return jax.numpy.concatenate(tree_flatten, axis=0)
 
 
 def flatten_hessian(hessian_pytree: PyTree, params_pytree: PyTree) -> jax.Array:
@@ -49,7 +62,7 @@ def flatten_hessian(hessian_pytree: PyTree, params_pytree: PyTree) -> jax.Array:
             jnp.concatenate(
                 [
                     arr.reshape(np.prod(p.shape), -1)
-                    for arr in flatten_tree[i * n_parts: (i + 1) * n_parts]
+                    for arr in flatten_tree[i * n_parts : (i + 1) * n_parts]
                 ],
                 axis=1,
             )
