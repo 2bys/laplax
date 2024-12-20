@@ -112,7 +112,9 @@ def diag_state_to_cov(state: dict) -> Callable:
 
 def create_low_rank_curvature(mv: Callable, **kwargs):
     """Generate a create_pytree_flattener, low-rank curvature approximations."""
+    key = kwargs.get("key", jax.random.key(0))
     layout = kwargs.get("layout")
+    single_batch = kwargs.get("single_batch", False)
     flatten, unflatten = create_pytree_flattener(layout)
     nparams = util.tree.get_size(layout)
     mv = jax.vmap(
@@ -120,7 +122,9 @@ def create_low_rank_curvature(mv: Callable, **kwargs):
         in_axes=-1,
         out_axes=-1,
     )  # Needs matmul structure.
-    low_rank_terms = get_low_rank_approximation(mv, size=nparams, **kwargs)
+    low_rank_terms = get_low_rank_approximation(
+        mv, size=nparams, key=key, mv_jittable=single_batch, **kwargs
+    )
 
     return low_rank_terms
 
