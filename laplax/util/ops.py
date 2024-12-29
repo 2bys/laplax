@@ -28,19 +28,25 @@ def str_to_bool(value: str) -> bool:
     return valid_values[value]
 
 
-def get_env_value(key: str, default: str) -> str:
+def get_env_value(key: str, default: str | None = None) -> str:
     """Fetches the environment variable or returns the default."""
     return os.getenv(key, default)
 
 
-def get_env_int(key: str, default: int) -> int:
+def get_env_int(key: str, default: int | None = None) -> int:
     """Fetches an environment variable as an integer."""
-    return int(get_env_value(key, str(default)))
+    val = get_env_value(key, default)
+    if val is not None:
+        val = int(val)
+    return val
 
 
-def get_env_bool(key: str, default: str) -> bool:
+def get_env_bool(key: str, default: str | None = None) -> bool:
     """Fetches an environment variable as a boolean."""
-    return str_to_bool(get_env_value(key, default))
+    val = get_env_value(key, default)
+    if val is not None:
+        val = str_to_bool(val)
+    return val
 
 
 # -------------------------------------------------------------------------
@@ -60,10 +66,9 @@ def lmap(func, data, batch_size: int | str | None = None):
             - int: Specifies the batch size directly.
     """
     if isinstance(batch_size, str):
-        batch_size = get_env_int(
-            f"LAPLAX_PARALLELISM_{batch_size.upper()}", DEFAULT_PARALLELISM
-        )
-    elif batch_size is None:
+        batch_size = get_env_int(f"LAPLAX_PARALLELISM_{batch_size.upper()}", None)
+
+    if batch_size is None:
         batch_size = get_env_int("LAPLAX_PARALLELISM", DEFAULT_PARALLELISM)
 
     return jax.lax.map(func, data, batch_size=batch_size)
