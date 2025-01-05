@@ -8,8 +8,8 @@ import jax.numpy as jnp
 from laplax.util.flatten import create_pytree_flattener
 from pytest_cases import parametrize_with_cases
 from laplax.util import tree  # Import your tree module
-from .cases import case_random_pytree  # Import your cases
-from .cases.case_random_pytree import case_random_pytree, case_two_pytree
+from .cases import case_generators  # Import your cases
+from .cases.case_generators import case_random_pytree, case_two_pytree
 
 import pytest
 import inspect
@@ -22,10 +22,9 @@ from laplax.util import tree  # Import your tree module
 tree_functions = inspect.getmembers(tree, inspect.isfunction)
 
 
-# Parametrize single input functions with case_random_pytree
 @pytest.mark.parametrize(
-    "test_case",
-    [case_random_pytree],  # Use case_random_pytree for single-input functions
+    "test_case",  # Parametrize with multiple samples from case_random_pytree
+    [next(case_random_pytree()) for _ in range(5)],  # 5 different samples from case_random_pytree (adjust the number as needed)
 )
 @pytest.mark.parametrize(
     "func",
@@ -36,11 +35,21 @@ def test_single_input_functions(test_case, func):
     """
     Test each single-input function in the tree module with a random PyTree.
     """
-    pytree, vector = next(test_case())
+    pytree, vector = test_case
+    name = func.__name__
+    result = func(pytree)
 
+    if name == "get_size":
+        expected_result = len(vector)
+    elif name == "sub":
+        expected_result = vector1 - vector2
+    else:
+        pytest.fail(f"Unknown behavior for function {name}")
+
+    # Assert the flattened result matches the expected behavior
     # Call the function with the single input
     result = func(pytree)
-    assert result is not None, f"{func.__name__} returned None"
+    assert result == expected_result
 
 
 # Parametrize two-input functions with case_two_pytree
@@ -53,6 +62,7 @@ def test_single_input_functions(test_case, func):
     [func for name, func in tree_functions if len(inspect.signature(func).parameters) == 2],  # Filter two-input functions
     ids=[name for name, func in tree_functions if len(inspect.signature(func).parameters) == 2]
 )
+
 def test_two_input_functions(test_case, func):
     """
     Test each two-input function in the tree module with random PyTrees.
