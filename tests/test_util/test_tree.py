@@ -1,61 +1,79 @@
+from typing import get_args
+
+import pytest
+import inspect
+import random
 import jax
 import jax.numpy as jnp
-import pytest
-import pytest_cases
-
-from laplax.types import KeyType, PyTree
 from laplax.util.flatten import create_pytree_flattener
-from laplax.util.tree import add, allclose, sub
+from pytest_cases import parametrize_with_cases
+from laplax.util import tree  # Import your tree module
+from .cases import case_random_pytree  # Import your cases
+from .cases.case_random_pytree import case_random_pytree, case_two_pytree
 
-TreeTestCase = tuple[PyTree, jax.Array]
+import pytest
+import inspect
+from laplax.util.flatten import create_pytree_flattener
+from pytest_cases import parametrize_with_cases
+from laplax.util import tree  # Import your tree module
 
 
-@pytest.fixture(
-    params=[pytest.param(seed, id=f"seed{seed}") for seed in [1, 42, 256]],
+# Discover all functions in the tree module
+tree_functions = inspect.getmembers(tree, inspect.isfunction)
+
+
+# Parametrize single input functions with case_random_pytree
+@pytest.mark.parametrize(
+    "test_case",
+    [case_random_pytree],  # Use case_random_pytree for single-input functions
 )
-def key(request) -> KeyType:
-    return jax.random.key(request.param)
+@pytest.mark.parametrize(
+    "func",
+    [func for name, func in tree_functions if len(inspect.signature(func).parameters) == 1],  # Filter single-input functions
+    ids=[name for name, func in tree_functions if len(inspect.signature(func).parameters) == 1]
+)
+def test_single_input_functions(test_case, func):
+    """
+    Test each single-input function in the tree module with a random PyTree.
+    """
+    pytree, vector = next(test_case())
+
+    # Call the function with the single input
+    result = func(pytree)
+    assert result is not None, f"{func.__name__} returned None"
 
 
-@pytest_cases.case(id="vector_tree")
-def case_one_vector_tree(key: KeyType):
-    vector = jax.random.normal(key, shape=(6,))
-    return {"a": vector[:2], "b": vector[2:4], "c": vector[4:]}, vector
+# Parametrize two-input functions with case_two_pytree
+@pytest.mark.parametrize(
+    "test_case",
+    [case_two_pytree],  # Use case_two_pytree for two-input functions
+)
+@pytest.mark.parametrize(
+    "func",
+    [func for name, func in tree_functions if len(inspect.signature(func).parameters) == 2],  # Filter two-input functions
+    ids=[name for name, func in tree_functions if len(inspect.signature(func).parameters) == 2]
+)
+def test_two_input_functions(test_case, func):
+    """
+    Test each two-input function in the tree module with random PyTrees.
+    """
+    pytree1, vector1 = next(test_case)
+    pytree2, vector2 = next(test_case)
 
+    # Call the function with two inputs
+    result = func(pytree1, pytree2)
+    flatten_result, _ = create_pytree_flattener(result)
 
-@pytest_cases.case(id="one_vector_tree")
-def case_one_vector_tree(key: KeyType):
-    vector = jax.random.normal(key, shape=(6,))
-    return {"a": vector[:2], "b": {"b1": vector[2:4], "b2": vector[4:]}}, vector
+    # You can customize the expected behavior for each function here
+    # Example: Check for "add", "sub", or other operations you might be testing
+    if func.__name__ == "add":
+        expected_vector = vector1 + vector2
+    elif func.__name__ == "sub":
+        expected_vector = vector1 - vector2
+    else:
+        pytest.fail(f"Unknown behavior for function {func.__name__}")
 
-
-@pytest_cases.case(id="two_vector_tree")
-def case_two_vector_tree(key: KeyType):
-    keys = jax.random.split(key, 2)
-    vector0 = jax.random.normal(keys[0], shape=(6,))
-    pytree0 = {"a": vector0[:2], "b": {"b1": vector0[2:4], "b2": vector0[4:]}}
-    vector1 = jax.random.normal(keys[1], shape=(6,))
-    pytree1 = {"a": vector1[:2], "b": {"b1": vector1[2:4], "b2": vector1[4:]}}
-    return (pytree0, vector0), (pytree1, vector1)
-
-
-@pytest_cases.parametrize_with_cases("test_case", cases=[case_two_vector_tree])
-def test_add(test_case):
-    (tree1, vector1), (tree2, vector2) = test_case
-    flatten, _ = create_pytree_flattener(tree1)
-    allclose(flatten(add(tree1, tree2)), vector1 + vector2)
-
-
-@pytest_cases.parametrize_with_cases("test_case", cases=[case_two_vector_tree])
-def test_sub(test_case):
-    (tree1, vector1), (tree2, vector2) = test_case
-    flatten, _ = create_pytree_flattener(tree1)
-    allclose(flatten(sub(tree1, tree2)), vector1 - vector2)
-
-
-# FIXME(2bys)
-# @pytest_cases.parametrize_with_cases("test_case", cases=[case_one_vector_tree])
-# def test_invert(test_case):
-#     (tree1, vector1) = test_case
-#     flatten, _ = create_pytree_flattener(tree1)
-#     allclose(flatten(invert(tree1))), vector1
+    # Assert the flattened result matches the expected behavior
+    assert jnp.allclose(flatten_result(result), expected_vector), (
+        f"{func.__name__} failed for two PyTrees"
+    )
