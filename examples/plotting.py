@@ -1,9 +1,13 @@
 """Plotting utilities."""
 
+from pathlib import Path
+
+import jax
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 
-def plot_regression_with_uncertainty(  # noqa: PLR0913, PLR0917
+def plot_regression_with_uncertainty(
     train_input,
     train_target,
     X_grid,
@@ -13,7 +17,7 @@ def plot_regression_with_uncertainty(  # noqa: PLR0913, PLR0917
     xlabel="Input",
     ylabel="Target",
 ):
-    """Create a visually enhanced plot of training data, model predictions, and uncertainty.
+    """Plot training data, model predictions, and uncertainty.
 
     Args:
         train_input: Training inputs (e.g., X_train).
@@ -51,7 +55,7 @@ def plot_regression_with_uncertainty(  # noqa: PLR0913, PLR0917
     )
 
     # Customize plot appearance
-    ax.grid(True, linestyle="--", alpha=0.6)  # noqa: FBT003
+    ax.grid(True, linestyle="--", alpha=0.6)
     ax.set_xlabel(xlabel, fontsize=12)
     ax.set_ylabel(ylabel, fontsize=12)
     ax.set_title(title, fontsize=14, fontweight="bold")
@@ -59,3 +63,92 @@ def plot_regression_with_uncertainty(  # noqa: PLR0913, PLR0917
 
     # Show the plot
     plt.show()
+
+
+def create_reliability_diagram(
+    bin_confidences: jax.Array,
+    bin_accuracies: jax.Array,
+    num_bins: int,
+    save_path: Path | None = None,
+) -> None:
+    fig, ax = plt.subplots()
+
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.grid(visible=True, axis="y")
+
+    bar_centers = jnp.linspace(0, 1, num_bins + 1)[:-1] + 1 / (2 * num_bins)
+    bar_width = 1 / num_bins
+
+    ax.bar(
+        x=bar_centers,
+        height=bin_accuracies,
+        width=bar_width,
+        label="Outputs",
+        color="blue",
+        edgecolor="black",
+    )
+
+    ax.bar(
+        x=bar_centers,
+        height=bin_confidences - bin_accuracies,
+        width=bar_width / 2,
+        bottom=bin_accuracies,
+        label="Gap",
+        color="red",
+        edgecolor="red",
+        alpha=0.4,
+    )
+
+    ax.plot([0, 1], [0, 1], transform=plt.gca().transAxes, linestyle="--", color="gray")
+    ax.set_xlabel("Confidence")
+    ax.set_ylabel("Accuracy")
+    fig.legend()
+
+    ax.set_aspect("equal")
+
+    if save_path is not None:
+        fig.savefig(save_path)
+        fig.clear()
+
+    else:
+        plt.show()
+
+
+def create_proportion_diagram(
+    bin_proportions: jax.Array,
+    num_bins: int,
+    save_path: Path | None = None,
+) -> None:
+    fig, ax = plt.subplots()
+
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.grid(visible=True, axis="y")
+
+    bar_centers = jnp.linspace(0, 1, num_bins + 1)[:-1] + 1 / (2 * num_bins)
+    bar_width = 1 / num_bins
+
+    ax.bar(
+        x=bar_centers,
+        height=bin_proportions,
+        width=bar_width,
+        label="Proportions",
+        color="green",
+        edgecolor="black",
+        alpha=0.4,
+    )
+
+    ax.axhline(y=1 / num_bins, color="gray", linestyle="--", label="Uniform")
+    ax.set_xlabel("Confidence")
+    ax.set_ylabel("Proportion")
+    fig.legend()
+
+    ax.set_aspect("equal")
+
+    if save_path is not None:
+        fig.savefig(save_path)
+        fig.clear()
+
+    else:
+        plt.show()

@@ -47,12 +47,12 @@ def invalid_prec():
 def test_prec_to_scale(prior_prec):
     """Test `prec_to_scale` for valid input."""
     scale = prec_to_scale(prior_prec)
-    assert (
-        scale.shape == prior_prec.shape
-    ), "Scale matrix shape should match precision matrix shape."
-    assert jnp.all(
-        jnp.linalg.eigvals(scale) > 0
-    ), "Scale matrix should be positive definite."
+    assert scale.shape == prior_prec.shape, (
+        "Scale matrix shape should match precision matrix shape."
+    )
+    assert jnp.all(jnp.linalg.eigvals(scale) > 0), (
+        "Scale matrix should be positive definite."
+    )
     assert jnp.allclose(
         scale @ scale.T @ prior_prec, jnp.eye(prior_prec.shape[0]), atol=1e-6, rtol=1e-6
     )
@@ -60,7 +60,7 @@ def test_prec_to_scale(prior_prec):
 
 def test_prec_to_scale_invalid(invalid_prec):
     """Test `prec_to_scale` for invalid input."""
-    with pytest.raises(ValueError, match="Matrix is not positive definite"):
+    with pytest.raises(ValueError, match="matrix is not positive definite"):
         prec_to_scale(invalid_prec)
 
 
@@ -81,7 +81,10 @@ def test_posterior_covariance_est(task):
     )
 
     # Get and test precision matrix
-    prec = CURVATURE_PRIOR_METHODS[task.method](curv_est, prior_prec=1.0)
+    prec = CURVATURE_PRIOR_METHODS[task.method](
+        curv_est=curv_est,
+        prior_arguments={"prior_prec": 1.0},
+    )
     prec_dense = task.adjust_prec(prec)
     assert jnp.allclose(
         prec_dense, task.true_curv + jnp.eye(task.size), atol=1e-4, rtol=1e-4
@@ -127,7 +130,7 @@ def test_posterior_covariance_est(task):
         ),
     ],
 )
-def test_register_curvature_method(  # noqa: PLR0913, PLR0917
+def test_register_curvature_method(
     name, create_fn, prior_fn, posterior_fn, scale_fn, cov_fn, default
 ):
     register_curvature_method(

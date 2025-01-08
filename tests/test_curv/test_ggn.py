@@ -7,6 +7,7 @@ import pytest
 import pytest_cases
 
 from laplax.curv.ggn import create_ggn_mv, create_loss_hessian_mv
+from laplax.enums import LossFn
 from laplax.util.ops import lmap
 
 from .cases.rosenbrock import RosenbrockCase
@@ -45,7 +46,8 @@ def test_mse_loss_hessian():
     )(pred, target)
 
     # Set loss hessian via laplax mv
-    hess_mv = create_loss_hessian_mv("mse")
+    #    hess_mv = create_loss_hessian_mv("mse")
+    hess_mv = create_loss_hessian_mv(LossFn.MSE)
     hess_laplax = jax.vmap(partial(hess_mv, pred=pred))(jnp.eye(10))
 
     assert jnp.allclose(hess_autodiff, hess_laplax, atol=1e-8)
@@ -92,6 +94,8 @@ def test_ggn_rosenbrock(rosenbrock):
         params=rosenbrock.x,
         data={"input": jnp.zeros(1), "target": jnp.zeros(1)},
         loss_fn=rosenbrock.loss_fn,
+        num_curv_samples=1,
+        num_total_samples=1,
     )
 
     # Compute the GGN

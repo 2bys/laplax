@@ -1,4 +1,5 @@
-from typing import Any, Callable, List
+from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -32,12 +33,10 @@ class BaseRegressionTask:
         self._initialize()
 
     def _initialize(self):
-        msg = "This method must be implemented by subclasses."
-        raise NotImplementedError(msg)
+        raise NotImplementedError
 
     def get_model_fn(self) -> Callable:
-        msg = "This method must be implemented by subclasses."
-        raise NotImplementedError(msg)
+        raise NotImplementedError
 
     def get_parameters(self) -> Any:
         return self.params
@@ -76,7 +75,7 @@ class LinenRegressionTask(BaseRegressionTask):
         self.params = self.model.init(rng_key, data["input"])
 
     def get_model_fn(self):
-        def model_fn(params, input):
+        def model_fn(input, params):
             return self.model.apply(params, input)
 
         return model_fn
@@ -99,7 +98,6 @@ class NNXRegressionTask(BaseRegressionTask):
                 x = self.linear2(x)
                 return x
 
-        rng_key = jax.random.PRNGKey(self.seed)
         rngs = nnx.Rngs(self.seed)
         self.model = MLP(
             rngs=rngs,
@@ -108,12 +106,11 @@ class NNXRegressionTask(BaseRegressionTask):
             out_channels=self.out_channels,
         )
 
-        _, self.params, self.rest = nnx.split(self.model, nnx.Param, ...)
+        self.graph_def, self.params = nnx.split(self.model)
 
     def get_model_fn(self):
-        def model_fn(params, input):
-            nnx.update(self.model, nnx.GraphState.merge(params, self.rest))
-            return self.model(input)
+        def model_fn(input, params):
+            return nnx.call((self.graph_def, params))(input)[0]
 
         return model_fn
 
@@ -124,7 +121,7 @@ class EquinoxRegressionTask(BaseRegressionTask):
 
     def _initialize(self):
         class MLP(eqx.Module):
-            layers: List[eqx.nn.Linear]
+            layers: list[eqx.nn.Linear]
             activation: Callable = eqx.static_field()
 
             def __init__(self, in_channels, hidden_channels, out_channels, keys):
@@ -150,7 +147,7 @@ class EquinoxRegressionTask(BaseRegressionTask):
         self.params, self.static = eqx.partition(self.model, eqx.is_array)
 
     def get_model_fn(self):
-        def model_fn(params, input):
+        def model_fn(input, params):
             new_model = eqx.combine(params, self.static)
             return new_model(input)
 
