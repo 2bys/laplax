@@ -22,6 +22,8 @@ from laplax.eval.metrics import estimate_q
 from laplax.types import Array, Data, Float, PriorArguments
 from laplax.util.ops import laplax_dtype, lmap
 
+EMPTY_DICT = {}
+
 
 # Calibrate prior
 def calibration_metric(**predictions) -> Float:
@@ -79,10 +81,12 @@ def evaluate_for_given_prior_arguments(
 
 
 def grid_search(
-    prior_prec_interval: Array,
+    interval: Array,
     objective: Callable[[PriorArguments], float],
     patience: int = 5,
     max_iterations: int | None = None,
+    value_key: str = "prior_prec",
+    prior_arguments: dict[str, Array] | dict = EMPTY_DICT,
 ) -> Float:
     """Perform grid search to optimize prior precision.
 
@@ -105,14 +109,15 @@ def grid_search(
     Raises:
         ValueError: If the objective function returns invalid results.
     """
-    results, prior_precs = [], []
+    results, values = [], []
     increasing_count = 0
     previous_result = None
 
-    for iteration, prior_prec in enumerate(prior_prec_interval):
+    for iteration, value in enumerate(interval):
         start_time = time.perf_counter()
         try:
-            result = objective({"prior_prec": prior_prec})
+            prior_arguments.update({value_key: value})
+            result = objective(prior_arguments)
         except ValueError as error:
             logger.warning(f"Caught an exception in validate {error}")
             result = float("inf")
@@ -124,12 +129,12 @@ def grid_search(
         # Logging for performance and tracking
         logger.info(
             f"Took {time.perf_counter() - start_time:.4f} seconds, "
-            f"prior prec: {prior_prec:.4f}, "
+            f"{value_key}: {value:.4f}, "
             f"result: {result:.6f}",
         )
 
         results.append(result)
-        prior_precs.append(prior_prec)
+        values.append(value)
 
         # If we have a previous result, check if the result has increased
         if previous_result is not None:
@@ -150,10 +155,10 @@ def grid_search(
             logger.info(f"Stopping due to reaching max iterations = {max_iterations}")
             break
 
-    best_prior_prec = prior_precs[np.nanargmin(results)]
-    logger.info(f"Chosen prior prec = {best_prior_prec:.4f}")
+    best_value = values[np.nanargmin(results)]
+    logger.info(f"Chosen {value_key} = {best_value:.4f}")
 
-    return best_prior_prec
+    return best_value
 
 
 def optimize_prior_prec(
