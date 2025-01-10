@@ -641,10 +641,12 @@ def register_curvature_method(
             )
             if fn is None
         ]
+        # fmt: off
         msg = (
             "Either a default method must be provided or the following functions must "
-            f"be specified: {", ".join(missing_functions)}."
+            f"be specified: {', '.join(missing_functions)}."
         )
+        # fmt: on
         raise ValueError(msg)
 
     CURVATURE_METHODS[name] = create_fn or CURVATURE_METHODS[default]
