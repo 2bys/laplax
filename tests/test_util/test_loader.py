@@ -12,6 +12,7 @@ from laplax.util.loader import (
     reduce_add,
     reduce_concat,
     reduce_online_mean,
+    reduce_sum,
     wrap_function_with_data_loader,
 )
 
@@ -33,7 +34,7 @@ def seed():
 @pytest.fixture
 def sample_iterable(seed):
     """Create sample data: list of arrays."""
-    shapes = [(5, 4, 2), (5, 4, 2), (5, 4, 2), (2, 4, 2)]
+    shapes = [(5, 4, 2), (5, 4, 2), (5, 4, 2)]
     keys = jax.random.split(jax.random.key(seed), len(shapes))
     return list(starmap(jax.random.normal, zip(keys, shapes, strict=True)))
 
@@ -48,11 +49,12 @@ def full_data(sample_iterable):
 @pytest.mark.parametrize(
     ("reduce_fn", "expected_transform"),
     [
-        (reduce_add, lambda x, p: jnp.sum(sum_function(x, p), axis=0, keepdims=True)),
+        (reduce_add, lambda x, p: sum_function(x, p).reshape(3, 5, 4, 2).sum(axis=0)),
+        (reduce_sum, lambda x, p: jnp.sum(sum_function(x, p), axis=0, keepdims=True)),
         (reduce_concat, sum_function),
         (reduce_online_mean, lambda x, p: jnp.mean(sum_function(x, p), axis=0)),
     ],
-    ids=["reduce_add", "reduce_concat", "reduce_online_mean"],
+    ids=["reduce_add", "reduce_sum", "reduce_concat", "reduce_online_mean"],
 )
 def test_reduce_functions_with_wrap_function(
     sample_iterable, full_data, reduce_fn, expected_transform, param

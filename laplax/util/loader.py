@@ -33,7 +33,7 @@ def input_target_split(batch: tuple[Array, Array]) -> Data:
 # ------------------------------------------------------------------------
 
 
-def reduce_add(
+def reduce_sum(
     res_new: Any, state: Any | None = None, *, keepdims: bool = True, axis: int = 0
 ) -> tuple[Any, Any]:
     """Perform a reduction by summing results across a specified axis.
@@ -51,6 +51,22 @@ def reduce_add(
     if state is None:
         return summed, summed
     new_state = add(state, summed)
+    return new_state, new_state
+
+
+def reduce_add(res_new: Any, state: Any | None = None) -> tuple[Any, Any]:
+    """Perform a reduction by adding results.
+
+    Args:
+        res_new: The new result to add to the current state.
+        state: The current accumulated state (default: None).
+
+    Returns:
+        The updated state and the new accumulated sum.
+    """
+    if state is None:
+        return res_new, res_new
+    new_state = add(res_new, state)
     return new_state, new_state
 
 
