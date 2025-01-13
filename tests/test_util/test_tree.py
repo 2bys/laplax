@@ -11,6 +11,7 @@ from laplax.util import tree  # Import your tree module
 from .cases import case_generators  # Import your cases
 from .cases.case_generators import case_random_pytree, case_two_pytree
 
+import itertools
 import pytest
 import inspect
 from laplax.util.flatten import create_pytree_flattener
@@ -40,15 +41,14 @@ def test_single_input_functions(test_case, func):
     result = func(pytree)
 
     if name == "get_size":
-        expected_result = len(vector)
+        assert result == len(vector)
     elif name == "ones_like":
-        pass
+        assert all(jax.tree_util.tree_map(lambda x: x == 1, result))
     elif name == "zeros_like":
-        pass
+        assert all(jax.tree_util.tree_map(lambda x: x == 0, result))
     else:
         pytest.fail(f"Unknown behavior for function {name}")
 
-    assert result == expected_result
 
 
 @pytest.mark.parametrize(
