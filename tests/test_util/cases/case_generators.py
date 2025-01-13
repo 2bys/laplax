@@ -33,7 +33,8 @@ def case_two_pytree():
         for depth in [1, 2, 3]:
             for max_branches in [2, 3, 4]:
                 pytree1 = generate_random_pytree(depth=depth, max_branches=max_branches, seed=seed)
-                pytree2 = generate_random_pytree(depth=depth, max_branches=max_branches, seed=seed)
+                func = lambda x: jax.random.normal(jax.random.key(seed + 1), x.shape)
+                pytree2 = jax.tree_map(func, pytree1)
                 flatten1, _ = create_pytree_flattener(pytree1)
                 flatten2, _ = create_pytree_flattener(pytree2)
                 vector1 = flatten1(pytree1)
