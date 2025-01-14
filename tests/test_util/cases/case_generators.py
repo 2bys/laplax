@@ -25,7 +25,7 @@ def case_random_pytree():
                 pytree = generate_random_pytree(depth=depth, max_branches=max_branches, seed=seed)
                 flatten, _ = create_pytree_flattener(pytree)
                 vector = flatten(pytree)
-                yield pytree, vector
+                yield pytree, vector, flatten
 
 
 def case_two_pytree():

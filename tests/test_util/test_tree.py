@@ -36,16 +36,26 @@ def test_single_input_functions(test_case, func):
     """
     Test each single-input function in the tree module with a random PyTree.
     """
-    pytree, vector = test_case
+    pytree, vector, flatten = test_case
+    int_tree = jax.tree_map(lambda x: x.astype(jnp.int32), pytree)
     name = func.__name__
-    result = func(pytree)
 
     if name == "get_size":
-        assert result == len(vector)
+        assert func(pytree) == len(vector)
     elif name == "ones_like":
-        assert all(jax.tree_util.tree_map(lambda x: x == 1, result))
+        assert all(jax.tree_util.tree_map(lambda x: x == 1, func(pytree)))
     elif name == "zeros_like":
-        assert all(jax.tree_util.tree_map(lambda x: x == 0, result))
+        assert all(jax.tree_util.tree_map(lambda x: x == 0, func(pytree)))
+    elif name == "eye_like":
+        assert jax.tree_util.tree_map(lambda x: jnp.allclose(x, jnp.eye(x.shape[0])), func(pytree))
+    elif name == "invert":
+        #TODO: change this in the test
+        result = func(int_tree)
+        assert flatten(result) == jnp.invert(vector.astype(jnp.int32))
+    elif name == "neg":
+        assert flatten(func(pytree)) == -vector
+    elif name == "sqrt":
+        flatten(func(pytree)) == jnp.sqrt(vector)
     else:
         pytest.fail(f"Unknown behavior for function {name}")
 
