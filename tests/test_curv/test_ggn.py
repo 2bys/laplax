@@ -46,7 +46,6 @@ def test_mse_loss_hessian():
     )(pred, target)
 
     # Set loss hessian via laplax mv
-    #    hess_mv = create_loss_hessian_mv("mse")
     hess_mv = create_loss_hessian_mv(LossFn.MSE)
     hess_laplax = jax.vmap(partial(hess_mv, pred=pred))(jnp.eye(10))
 

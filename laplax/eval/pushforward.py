@@ -43,7 +43,7 @@ from laplax.util.tree import add
 # -------------------------------------------------------------------------
 
 
-def set_get_weight_sample(key, mean_params, scale_mv, num_weight_samples, **kwargs):
+def set_get_weight_sample(key, mean_params, scale_mv, num_samples, **kwargs):
     """Creates a function to sample weights from a Gaussian distribution.
 
     This function generates weight samples from a Gaussian distribution
@@ -55,21 +55,21 @@ def set_get_weight_sample(key, mean_params, scale_mv, num_weight_samples, **kwar
         key: PRNG key for generating random samples.
         mean_params: Mean of the weight-space Gaussian distribution.
         scale_mv: Function for the scale matrix-vector product.
-        num_weight_samples: Number of weight samples to generate.
+        num_samples: Number of weight samples to generate.
         **kwargs: Additional arguments, including:
             - `precompute_samples`: Controls whether samples are precomputed.
 
     Returns:
         Callable: A function that generates a specific weight sample by index.
     """
-    keys = jax.random.split(key, num_weight_samples)
+    keys = jax.random.split(key, num_samples)
 
     def get_weight_sample(idx):
         return util.tree.normal_like(keys[idx], mean=mean_params, scale_mv=scale_mv)
 
     return precompute_list(
         get_weight_sample,
-        jnp.arange(num_weight_samples),
+        jnp.arange(num_samples),
         option=kwargs.get("precompute_samples", "samples"),
     )
 
@@ -188,7 +188,7 @@ def get_dist_state(
             key,
             mean_params=weight_sample_mean,
             scale_mv=posterior_state.scale_mv(posterior_state.state),
-            num_weight_samples=num_samples,
+            num_samples=num_samples,
         )
         dist_state["get_weight_samples"] = get_weight_samples
 
@@ -378,12 +378,46 @@ def nonlin_special_pred_act(
     name: str,
     **kwargs,
 ) -> tuple[dict[str, Array], dict[str, Any]]:
+    """Apply special predictive methods to nonlinear Laplace for classification.
+
+    This function applies special predictive methods (Laplace Bridge, Mean Field-0,
+    Mean Field-1, or Mean Field-2) to nonlinear Laplace for classification. These
+    methods transform the predictions into probability space using specific formulations
+    rather than Monte Carlo sampling.
+
+    Args:
+        results: Dictionary to store computed results.
+        aux: Auxiliary data containing prediction information.
+        name: Name under which to store the computed predictions.
+        **kwargs: Additional arguments, including:
+            - `special_pred_type`: Type of special prediction ("laplace_bridge",
+              "mean_field_0", "mean_field_1", or "mean_field_2")
+            - `use_correction`: Whether to apply correction term for applicable methods.
+
+    Returns:
+        tuple: Updated `results` and `aux`.
+    """
     return special_pred(results, aux, name, linearized=False, **kwargs)
 
 
 def nonlin_mc_pred_act(
     results: dict[str, Array], aux: dict[str, Any], name: str, **kwargs
 ) -> tuple[dict[str, Array], dict[str, Any]]:
+    """Compute Monte Carlo predictions for nonlinear Laplace classification.
+
+    This function generates Monte Carlo predictions for classification by averaging
+    softmax probabilities across different weight samples. If samples are not already
+    available, it generates them first.
+
+    Args:
+        results: Dictionary to store computed results.
+        aux: Auxiliary data containing prediction information.
+        name: Name under which to store the computed predictions.
+        **kwargs: Additional arguments passed to sample generation.
+
+    Returns:
+        tuple: Updated `results` and `aux`.
+    """
     if "samples" not in results:
         results, aux = nonlin_samples(
             results=results, aux=aux, name="samples", **kwargs
@@ -666,12 +700,46 @@ def lin_special_pred_act(
     name: str,
     **kwargs,
 ) -> tuple[dict[str, Array], dict[str, Any]]:
+    """Apply special predictive methods to linearized Laplace for classification.
+
+    This function applies special predictive methods (Laplace Bridge, Mean Field-0,
+    Mean Field-1, or Mean Field-2) to linearized Laplace for classification. These
+    methods transform the predictions into probability space using specific formulations
+    rather than Monte Carlo sampling.
+
+    Args:
+        results: Dictionary to store computed results.
+        aux: Auxiliary data containing prediction information.
+        name: Name under which to store the computed predictions.
+        **kwargs: Additional arguments, including:
+            - `special_pred_type`: Type of special prediction ("laplace_bridge",
+              "mean_field_0", "mean_field_1", or "mean_field_2")
+            - `use_correction`: Whether to apply correction term for applicable methods.
+
+    Returns:
+        tuple: Updated `results` and `aux`.
+    """
     return special_pred(results, aux, name, linearized=True, **kwargs)
 
 
 def lin_mc_pred_act(
     results: dict[str, Array], aux: dict[str, Any], name: str, **kwargs
 ) -> tuple[dict[str, Array], dict[str, Any]]:
+    """Compute Monte Carlo predictions for linear Laplace classification.
+
+    This function generates Monte Carlo predictions for classification by averaging
+    softmax probabilities across different weight samples. If samples are not already
+    available, it generates them first.
+
+    Args:
+        results: Dictionary to store computed results.
+        aux: Auxiliary data containing prediction information.
+        name: Name under which to store the computed predictions.
+        **kwargs: Additional arguments passed to sample generation.
+
+    Returns:
+        tuple: Updated `results` and `aux`.
+    """
     if "samples" not in results:
         results, aux = lin_samples(results=results, aux=aux, name="samples", **kwargs)
 
@@ -752,7 +820,7 @@ def set_nonlin_pushforward(
     key: KeyType,
     loss_scaling_factor: Float = 1.0,
     pushforward_fns: dict = DEFAULT_NONLIN_FUNCTIONS,
-    num_weight_samples: int = 100,
+    num_samples: int = 100,
     **kwargs,
 ):
     """Construct a Monte Carlo pushforward predictive function.
@@ -772,7 +840,7 @@ def set_nonlin_pushforward(
             Defaults to 1.0.
         pushforward_fns: A dictionary of Monte Carlo pushforward functions
             (default: `DEFAULT_MC_FUNCTIONS`).
-        num_weight_samples: Number of weight samples for Monte Carlo predictions.
+        num_samples: Number of weight samples for Monte Carlo predictions.
         **kwargs: Additional arguments passed to the pushforward functions.
 
     Returns:
@@ -788,7 +856,7 @@ def set_nonlin_pushforward(
         model_fn,
         posterior_state,
         linearized=False,
-        num_samples=num_weight_samples,
+        num_samples=num_samples,
         key=key,
     )
 
@@ -847,7 +915,7 @@ def set_lin_pushforward(
         posterior_state,
         linearized=True,
         num_samples=kwargs.get("num_samples", 0),
-        key=kwargs["key"],
+        key=kwargs.get("key"),
     )
 
     # Set prob predictive

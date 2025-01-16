@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
+from loguru import logger
 
 from laplax import util
 from laplax.curv.low_rank import LowRankTerms, get_low_rank_approximation
@@ -22,12 +23,12 @@ from laplax.types import (
     PyTree,
 )
 from laplax.util.flatten import (
-    create_partial_pytree_flattener,
     create_pytree_flattener,
     wrap_factory,
     wrap_function,
 )
 from laplax.util.mv import diagonal, todense
+from laplax.util.tree import get_size
 
 # -----------------------------------------------------------------------
 # FULL
@@ -52,9 +53,18 @@ def create_full_curvature(
         A dense matrix representing the full curvature approximation.
     """
     del kwargs
-    curv_est = todense(mv, layout=layout)
-    flatten_partial_tree, _ = create_partial_pytree_flattener(curv_est)
-    return flatten_partial_tree(curv_est)
+    if isinstance(layout, int):
+        msg = (
+            "Full curvature assumes parameter dictionary as input, "
+            f"got type {type(layout)} instead. Proceeding without wrapper."
+        )
+        logger.warning(msg)
+        mv_wrapped = mv
+    else:
+        flatten, unflatten = create_pytree_flattener(layout)
+        mv_wrapped = wrap_function(mv, input_fn=unflatten, output_fn=flatten)
+    curv_est = todense(mv_wrapped, layout=get_size(layout))
+    return curv_est
 
 
 def full_with_prior(

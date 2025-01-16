@@ -51,7 +51,7 @@ def test_nonlin_pushforward(curv_op, task):
         mean_params=params,
         posterior_fn=posterior_fn,
         prior_arguments={"prior_prec": 99999999999.0},
-        num_weight_samples=100000,
+        num_samples=100000,
     )
 
     # Compute pushforwards

@@ -44,7 +44,7 @@ def test_diagonal_and_todense_pytree_mvp(n1, n2):
         "x": jnp.zeros(n1),
         "y": jnp.zeros(n2),
     }
-    example_flat, tree_def = jax.tree_flatten(layout)
+    example_flat, tree_def = jax.tree.flatten(layout)
     sizes = [leaf.size for leaf in example_flat]
     total_dim = sum(sizes)
 
@@ -52,7 +52,7 @@ def test_diagonal_and_todense_pytree_mvp(n1, n2):
     A = jax.random.normal(key, (total_dim, total_dim))
 
     def mv(pytree_vec):
-        leaves, _ = jax.tree_flatten(pytree_vec)
+        leaves, _ = jax.tree.flatten(pytree_vec)
         x_flat = jnp.concatenate([leaf.ravel() for leaf in leaves])
         y_flat = A @ x_flat
 
@@ -68,7 +68,7 @@ def test_diagonal_and_todense_pytree_mvp(n1, n2):
             y_leaves.append(s.reshape(leaf_shape))
 
         # Unflatten back
-        return jax.tree_unflatten(tree_def, y_leaves)
+        return jax.tree.unflatten(tree_def, y_leaves)
 
     # 1) Compare diagonal(mv, layout=layout) to jnp.diag(A)
     diag_computed = diagonal(mv, layout)
