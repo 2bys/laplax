@@ -2,6 +2,7 @@
 local_*
 .ruff_cache
 .idea
+.vscode
 
 # Extensions
 *.ipynb
@@ -10,7 +11,9 @@ local_*
 *.pyc
 
 # Example notebooks
+*examples/data/*
 !examples/0001_posterior_gp_kernel.ipynb
+!examples/0002_laplax_on_mnist.ipynb
 
 # Directories
 .tox

@@ -1,20 +1,48 @@
-# noqa: D100
+"""Regression and classification metrics for evaluating uncertainty quantification.
+
+This module provides a comprehensive suite of classification and regression metrics for
+evaluating probabilistic models.
+
+Key features include:
+- **Classification Metrics**: Accuracy, top-k accuracy, cross-entropy, and
+    multiclass Brier score.
+- **Regression Metrics**: Root mean squared error (RMSE), q-value, and negative
+    log-likelihood (NLL) for Gaussian distributions.
+- **Bin Metrics**: Confidence and correctness metrics binned by confidence intervals.
+
+The module leverages JAX for efficient numerical computation and supports flexible
+evaluation for diverse model outputs.
+"""
+
 import math
-from collections import OrderedDict
 
 import jax
 import jax.numpy as jnp
 from jax import lax
+
+from laplax.enums import CalibrationErrorNorm
+from laplax.types import Array, Float
 
 # --------------------------------------------------------------------------------
 # Classification metrics
 # --------------------------------------------------------------------------------
 
 
-def correctness(pred: jax.Array, target: jax.Array) -> jax.Array:
-    """Compute whether each target label is the top-1 prediction of the output.
+def correctness(pred: Array, target: Array) -> Array:
+    """Determine if each target label matches the top-1 prediction.
 
-    If target is a 2D array, its argmax is taken before the calculation.
+    Computes a binary indicator for whether the predicted class matches the
+    target class. If the target is a 2D array, it is first reduced to its
+    class index using `argmax`.
+
+    Args:
+        pred: Array of predictions with shape `(batch_size, num_classes)`.
+        target: Array of ground truth labels, either 1D (class indices) or
+            2D (one-hot encoded).
+
+    Returns:
+        Boolean array of shape `(batch_size,)` indicating correctness
+        for each prediction.
     """
     pred = jnp.argmax(pred, axis=-1)
 
@@ -24,12 +52,22 @@ def correctness(pred: jax.Array, target: jax.Array) -> jax.Array:
     return pred == target
 
 
-def accuracy(
-    pred: jax.Array, target: jax.Array, top_k: tuple[int] = (1,)
-) -> list[jax.Array]:
-    """Compute the accuracy over the k top predictions for the specified values of k.
+def accuracy(pred: Array, target: Array, top_k: tuple[int] = (1,)) -> list[Array]:
+    """Compute top-k accuracy for specified values of k.
 
-    If target is a 2D array, its argmax is taken before the calculation.
+    For each k in `top_k`, this function calculates the fraction of samples
+    where the ground truth label is among the top-k predictions. If the target
+    is a 2D array, it is reduced to its class index using `argmax`.
+
+    Args:
+        pred: Array of predictions with shape `(batch_size, num_classes)`.
+        target: Array of ground truth labels, either 1D (class indices) or
+            2D (one-hot encoded).
+        top_k: Tuple of integers specifying the values of k for top-k accuracy.
+
+    Returns:
+        A list of accuracies corresponding to each k in `top_k`,
+        expressed as percentages.
     """
     max_k = min(max(top_k), pred.shape[1])
     batch_size = target.shape[0]
@@ -50,13 +88,40 @@ def accuracy(
     ]
 
 
-def cross_entropy(prob_p: jax.Array, prob_q: jax.Array, axis: int = -1) -> jax.Array:
+def cross_entropy(prob_p: Array, prob_q: Array, axis: int = -1) -> Array:
+    """Compute cross-entropy between two probability distributions.
+
+    This function calculates the cross-entropy of `prob_p` relative to `prob_q`,
+    summing over the specified axis.
+
+    Args:
+        prob_p: Array of true probability distributions.
+        prob_q: Array of predicted probability distributions.
+        axis: Axis along which to compute the cross-entropy (default: -1).
+
+    Returns:
+        Cross-entropy values for each sample.
+    """
     p_log_q = jax.scipy.special.xlogy(prob_p, prob_q)
 
     return -p_log_q.sum(axis=axis)
 
 
-def multiclass_brier(prob: jax.Array, target: jax.Array) -> jax.Array:
+def multiclass_brier(prob: Array, target: Array) -> Array:
+    """Compute the multiclass Brier score.
+
+    The Brier score is a measure of the accuracy of probabilistic predictions.
+    For multiclass classification, it calculates the mean squared difference
+    between the predicted probabilities and the true target.
+
+    Args:
+        prob: Array of predicted probabilities with shape `(batch_size, num_classes)`.
+        target: Array of ground truth labels, either 1D (class indices) or
+            2D (one-hot encoded).
+
+    Returns:
+        Mean Brier score across all samples.
+    """
     if target.ndim == 1:
         target = jax.nn.one_hot(target, num_classes=prob.shape[-1])
 
@@ -67,28 +132,26 @@ def multiclass_brier(prob: jax.Array, target: jax.Array) -> jax.Array:
 
 
 def calculate_bin_metrics(
-    confidence: jax.Array,
-    correctness: jax.Array,
+    confidence: Array,
+    correctness: Array,
     num_bins: int = 15,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Calculate the binwise accuracies, confidences and proportions of samples.
+) -> tuple[Array, Array, Array]:
+    """Calculate bin-wise metrics for confidence and correctness.
+
+    Computes the proportion of samples, average confidence, and average accuracy
+    within each bin, where the bins are defined by evenly spaced confidence
+    intervals.
 
     Args:
-    ----
-        confidence: Float tensor of shape (n,) containing predicted confidences.
-        correctness: Float tensor of shape (n,) containing the true correctness
-            labels.
-        num_bins: Number of equally sized bins.
+        confidence: Array of predicted confidence values with shape `(n,)`.
+        correctness: Array of correctness labels (0 or 1) with shape `(n,)`.
+        num_bins: Number of bins for dividing the confidence range (default: 15).
 
     Returns:
-    -------
-        bin_proportions: Float tensor of shape (num_bins,) containing proportion
-            of samples in each bin. Sums up to 1.
-        bin_confidences: Float tensor of shape (num_bins,) containing the average
-            confidence for each bin.
-        bin_accuracies: Float tensor of shape (num_bins,) containing the average
-            accuracy for each bin.
-
+        Tuple of arrays:
+            - Bin proportions: Proportion of samples in each bin.
+            - Bin confidences: Average confidence for each bin.
+            - Bin accuracies: Average accuracy for each bin.
     """
     bin_boundaries = jnp.linspace(0, 1, num_bins + 1)
     indices = jnp.digitize(confidence, bin_boundaries) - 1
@@ -110,68 +173,194 @@ def calculate_bin_metrics(
     return bin_proportions, bin_confidences, bin_accuracies
 
 
+def calibration_error(
+    confidence: jax.Array,
+    correctness: jax.Array,
+    num_bins: int,
+    norm: CalibrationErrorNorm,
+) -> jax.Array:
+    """Compute the expected/maximum calibration error.
+
+    Args:
+        confidence: Float tensor of shape (n,) containing predicted confidences.
+        correctness: Float tensor of shape (n,) containing the true correctness
+            labels.
+        num_bins: Number of equally sized bins.
+        norm: Whether to return ECE (L1 norm) or MCE (inf norm).
+
+    Returns:
+        The ECE/MCE.
+
+    """
+    bin_proportions, bin_confidences, bin_accuracies = calculate_bin_metrics(
+        confidence, correctness, num_bins
+    )
+
+    abs_diffs = jnp.abs(bin_accuracies - bin_confidences)
+
+    if norm == CalibrationErrorNorm.L1:
+        score = (bin_proportions * abs_diffs).sum()
+    else:
+        score = abs_diffs.max()
+
+    return score
+
+
+def expected_calibration_error(
+    confidence: jax.Array,
+    correctness: jax.Array,
+    num_bins: int,
+) -> jax.Array:
+    """Compute the expected calibration error.
+
+    Args:
+        confidence: Float tensor of shape (n,) containing predicted confidences.
+        correctness: Float tensor of shape (n,) containing the true correctness
+            labels.
+        num_bins: Number of equally sized bins.
+
+    Returns:
+        The ECE/MCE.
+
+    """
+    return calibration_error(
+        confidence=confidence,
+        correctness=correctness,
+        num_bins=num_bins,
+        norm=CalibrationErrorNorm.L1,
+    )
+
+
+def maximum_calibration_error(
+    confidence: jax.Array,
+    correctness: jax.Array,
+    num_bins: int,
+) -> jax.Array:
+    """Compute the maximum calibration error.
+
+    Args:
+        confidence: Float tensor of shape (n,) containing predicted confidences.
+        correctness: Float tensor of shape (n,) containing the true correctness
+            labels.
+        num_bins: Number of equally sized bins.
+
+    Returns:
+        The ECE/MCE.
+
+    """
+    return calibration_error(
+        confidence=confidence,
+        correctness=correctness,
+        num_bins=num_bins,
+        norm=CalibrationErrorNorm.INF,
+    )
+
+
 # --------------------------------------------------------------------------------
 # Regression metrics
 # --------------------------------------------------------------------------------
 
 
 def estimate_q(
-    pred_mean: jnp.ndarray,
-    pred_std: jnp.ndarray,
-    target: jnp.ndarray,
+    pred_mean: Array,
+    pred_std: Array,
+    target: Array,
     **kwargs,
-) -> float:
-    """Estimate the q value."""
+) -> Float:
+    r"""Estimate the q-value for predictions.
+
+    The q-value is a measure of the squared error normalized by the predicted
+    variance.
+
+    Mathematically:
+    $q = \frac{1}{n} \sum_{i=1}^n \frac{(y_i - \hat{y}_i)^2}{\sigma_i^2}$.
+
+    Args:
+        pred_mean: Array of predicted means.
+        pred_std: Array of predicted standard deviations.
+        target: Array of ground truth labels.
+        **kwargs: Additional arguments (ignored).
+
+    Returns:
+        The estimated q-value.
+    """
     del kwargs
     return jnp.mean(jnp.power(pred_mean - target, 2) / jnp.power(pred_std, 2))
 
 
-def estimate_rmse(pred_mean: jax.Array, target: jax.Array, **kwargs) -> float:
-    """Estimate the 'ensemble' RMSE with pred_mean and target."""
+def estimate_rmse(pred_mean: Array, target: Array, **kwargs) -> Float:
+    r"""Estimate the root mean squared error (RMSE) for predictions.
+
+    Mathematically:
+    $\text{RMSE} = \sqrt{\frac{1}{n} \sum_{i=1}^n (y_i - \hat{y}_i)^2}$.
+
+    Args:
+        pred_mean: Array of predicted means.
+        target: Array of ground truth labels.
+        **kwargs: Additional arguments (ignored).
+
+    Returns:
+        The RMSE value.
+    """
     del kwargs
     return jnp.sqrt(jnp.mean(jnp.power(pred_mean - target, 2)))
 
 
-def estimate_true_rmse(pred: jax.Array, target: jax.Array, **kwargs) -> float:
-    """Estimate the 'true' RMSE with pred and target."""
+def estimate_true_rmse(pred: Array, target: Array, **kwargs) -> Float:
+    """Estimate the 'true' RMSE for predictions.
+
+    This function computes the RMSE directly from the predictions and targets,
+    without additional variance or uncertainty modeling.
+
+    Args:
+        pred: Array of predicted values.
+        target: Array of ground truth labels.
+        **kwargs: Additional arguments (ignored).
+
+    Returns:
+        The RMSE value.
+    """
     del kwargs
     return jnp.sqrt(jnp.mean(jnp.power(pred - target, 2)))
 
 
-def nll_gaussian(  # noqa: D417
-    pred: jnp.ndarray,
-    pred_std: jnp.ndarray,
-    target: jnp.ndarray,
-    scaled: bool = True,  # noqa: FBT001, FBT002
+def nll_gaussian(
+    pred_mean: Array,
+    pred_std: Array,
+    target: Array,
+    *,
+    scaled: bool = True,
     **kwargs,
-) -> float:
-    """Negative log likelihood for a Gaussian distribution in JAX.
+) -> Float:
+    r"""Compute the negative log-likelihood (NLL) for a Gaussian distribution.
 
-    The negative log likelihood for held out data (y_true) given predictive
-    uncertainty with mean (y_pred) and standard-deviation (y_std).
+    The NLL quantifies how well the predictive distribution fits the data,
+    assuming a Gaussian distribution characterized by `pred` (mean) and `pred_std`
+    (standard deviation).
+
+    Mathematically:
+    $\text{NLL} = - \sum_{i=1}^n \log \left( \frac{1}{\sqrt{2\pi \sigma_i^2}}
+    \exp \left( -\frac{(y_i - \hat{y}_i)^2}{2\sigma_i^2} \right) \right)$.
 
     Args:
-        pred: 1D array of the predicted means for the held out dataset.
-        pred_std: 1D array of the predicted standard deviations for the held out
-            dataset.
-        target: 1D array of the true labels in the held out dataset.
-        scaled: Whether to scale the negative log likelihood by the size
-            of the held out set.
+        pred_mean: Array of predicted means for the dataset.
+        pred_std: Array of predicted standard deviations for the dataset.
+        target: Array of ground truth labels for the dataset.
+        scaled: Whether to normalize the NLL by the number of samples (default: True).
+        **kwargs: Additional arguments (ignored).
 
     Returns:
-        The negative log likelihood for the held out set.
-
-    This code follows: https://github.com/uncertainty-toolbox/uncertainty-toolbox/blob/main/uncertainty_toolbox/metrics_scoring_rule.py
+        The computed NLL value.
     """
     del kwargs
 
     # Ensure input arrays are 1D and of the same shape
-    assert (  # noqa: S101
-        pred.shape == pred_std.shape == target.shape
-    ), "Arrays must have the same shape."
+    if not (pred_mean.shape == pred_std.shape == target.shape):
+        msg = "arrays must have the same shape"
+        raise ValueError(msg)
 
     # Compute residuals
-    residuals = pred - target
+    residuals = pred_mean - target
 
     # Compute negative log likelihood
     nll_list = jax.scipy.stats.norm.logpdf(residuals, scale=pred_std)
@@ -179,13 +368,13 @@ def nll_gaussian(  # noqa: D417
 
     # Scale the result by the number of data points if `scaled` is True
     if scaled:
-        nll /= math.prod(pred.shape)
+        nll /= math.prod(pred_mean.shape)
 
     return nll
 
 
-DEFAULT_REGRESSION_METRICS = OrderedDict([
-    ("rmse", estimate_rmse),
-    ("q", estimate_q),
-    ("nll", nll_gaussian),
-])
+DEFAULT_REGRESSION_METRICS = {
+    "rmse": estimate_rmse,
+    "q": estimate_q,
+    "nll": nll_gaussian,
+}
