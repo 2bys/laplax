@@ -19,34 +19,34 @@ from laplax.types import Any, Array, Callable, Data, InputArray
 from laplax.util.ops import lmap
 from laplax.util.utils import identity
 
+# Currently deprecated.
+# def finalize_function_wrapper(
+#     fn: Callable,
+# ) -> Callable:
+#     """Wrap a function to store its result in a dictionary.
 
-def finalize_function_wrapper(
-    fn: Callable,
-) -> Callable:
-    """Wrap a function to store its result in a dictionary.
+#     This wrapper allows a function to be executed with specified arguments, and
+#     its output is stored in the `results` dictionary under a specified name.
 
-    This wrapper allows a function to be executed with specified arguments, and
-    its output is stored in the `results` dictionary under a specified name.
+#     Args:
+#         fn: A callable function to be wrapped.
 
-    Args:
-        fn: A callable function to be wrapped.
+#     Returns:
+#         Callable: A wrapped function that takes `results`, `aux`, `name`, and
+#         other keyword arguments, and updates the `results` dictionary.
+#     """
 
-    Returns:
-        Callable: A wrapped function that takes `results`, `aux`, `name`, and
-        other keyword arguments, and updates the `results` dictionary.
-    """
+#     def wrapper(
+#         results: dict[str, Array], aux: dict[str, Any] | None, name: str, **kwargs
+#     ):
+#         results[name] = fn(**kwargs)
+#         return results, aux
 
-    def wrapper(
-        results: dict[str, Array], aux: dict[str, Any] | None, name: str, **kwargs
-    ):
-        results[name] = fn(**kwargs)
-        return results, aux
-
-    return wrapper
+#     return wrapper
 
 
 def finalize_functions(
-    functions: dict[str, Callable],
+    functions: list[Callable],
     results: dict,  # Typing must allow empty dict for initializations
     aux: dict[str, Any] | None = None,
     **kwargs,
@@ -68,8 +68,8 @@ def finalize_functions(
         The updated `results` dictionary containing the outputs of all
         executed functions.
     """
-    for name, func in functions.items():
-        results, aux = func(results=results, aux=aux, name=name, **kwargs)
+    for func in functions:
+        results, aux = func(results=results, aux=aux, **kwargs)
     return results
 
 
@@ -100,11 +100,59 @@ def evaluate_on_dataset(
     return lmap(evaluate_data_point, data, batch_size=kwargs.get("lmap_eval", "data"))
 
 
+def apply_function(func, name="nll", field="results", **kwargs):
+    def apply(results, aux, **local_kwargs):
+        # Create key-value pair for function
+        key_value_pairs = {}
+
+        for k, v in kwargs.items():
+            if v in results:
+                key_value_pairs[k] = results[v]
+            elif v in aux:
+                key_value_pairs[k] = aux[v]
+            else:
+                msg = f"Key {k} not found in results or aux."
+                raise ValueError(msg)
+
+        res = func(**key_value_pairs, **local_kwargs)
+
+        if field == "results":
+            results[name] = res
+        elif field == "aux":
+            aux[name] = res
+        else:
+            msg = f"Field {field} must be either 'results' or 'aux'."
+            raise ValueError(msg)
+
+        return results, aux
+
+    return apply
+
+
+def transfer_entry(mapping: dict[str, str], field="results", access_from="aux"):
+    def transfer(results, aux, **kwargs):
+        del kwargs
+        options = {"results": results, "aux": aux}
+        if field == "results":
+            for k, v in mapping.items():
+                results[k] = options[access_from][v]
+        elif field == "aux":
+            for k, v in mapping.items():
+                aux[k] = options[access_from][v]
+        else:
+            msg = f"Field {field} must be either 'results' or 'aux'."
+            raise ValueError(msg)
+
+        return results, aux
+
+    return transfer
+
+
 def evaluate_metrics_on_dataset(
     pred_fn: Callable[[InputArray], dict[str, Array]],
     data: Data,
     *,
-    metrics: dict[str, Callable],
+    metrics: list[Callable],
     apply: Callable = identity,
     **kwargs,
 ) -> dict:
@@ -130,12 +178,12 @@ def evaluate_metrics_on_dataset(
         dataset.
     """
     # Wrap metrics
-    metrics = {name: finalize_function_wrapper(fn) for name, fn in metrics.items()}
+    # metrics = {name: finalize_function_wrapper(fn) for name, fn in metrics.items()}
 
     # Setup pointwise evaluation
     def evaluate_data_point(dp: Data) -> dict[str, Array]:
         pred = {**pred_fn(dp["input"]), "target": dp["target"]}
-        return finalize_functions(functions=metrics, results={}, aux=None, **pred)
+        return finalize_functions(functions=metrics, results={}, aux=pred, **kwargs)
 
     # Evaluate metrics
     evaluated_metrics = lmap(

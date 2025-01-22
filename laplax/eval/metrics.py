@@ -262,7 +262,7 @@ def maximum_calibration_error(
 
 
 def estimate_q(
-    pred_mean: Array,
+    pred: Array,
     pred_std: Array,
     target: Array,
     **kwargs,
@@ -285,35 +285,17 @@ def estimate_q(
         The estimated q-value.
     """
     del kwargs
-    return jnp.mean(jnp.power(pred_mean - target, 2) / jnp.power(pred_std, 2))
+    return jnp.mean(jnp.power(pred - target, 2) / jnp.power(pred_std, 2))
 
 
-def estimate_rmse(pred_mean: Array, target: Array, **kwargs) -> Float:
+def estimate_rmse(pred: Array, target: Array, **kwargs) -> Float:
     r"""Estimate the root mean squared error (RMSE) for predictions.
 
     Mathematically:
     $\text{RMSE} = \sqrt{\frac{1}{n} \sum_{i=1}^n (y_i - \hat{y}_i)^2}$.
 
     Args:
-        pred_mean: Array of predicted means.
-        target: Array of ground truth labels.
-        **kwargs: Additional arguments (ignored).
-
-    Returns:
-        The RMSE value.
-    """
-    del kwargs
-    return jnp.sqrt(jnp.mean(jnp.power(pred_mean - target, 2)))
-
-
-def estimate_true_rmse(pred: Array, target: Array, **kwargs) -> Float:
-    """Estimate the 'true' RMSE for predictions.
-
-    This function computes the RMSE directly from the predictions and targets,
-    without additional variance or uncertainty modeling.
-
-    Args:
-        pred: Array of predicted values.
+        pred: Array of predicted means.
         target: Array of ground truth labels.
         **kwargs: Additional arguments (ignored).
 
@@ -322,6 +304,25 @@ def estimate_true_rmse(pred: Array, target: Array, **kwargs) -> Float:
     """
     del kwargs
     return jnp.sqrt(jnp.mean(jnp.power(pred - target, 2)))
+
+
+# DEPRECATED
+# def estimate_true_rmse(pred: Array, target: Array, **kwargs) -> Float:
+#     """Estimate the 'true' RMSE for predictions.
+
+#     This function computes the RMSE directly from the predictions and targets,
+#     without additional variance or uncertainty modeling.
+
+#     Args:
+#         pred: Array of predicted values.
+#         target: Array of ground truth labels.
+#         **kwargs: Additional arguments (ignored).
+
+#     Returns:
+#         The RMSE value.
+#     """
+#     del kwargs
+#     return jnp.sqrt(jnp.mean(jnp.power(pred - target, 2)))
 
 
 def nll_gaussian(
