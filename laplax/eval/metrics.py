@@ -276,7 +276,7 @@ def estimate_q(
     $q = \frac{1}{n} \sum_{i=1}^n \frac{(y_i - \hat{y}_i)^2}{\sigma_i^2}$.
 
     Args:
-        pred_mean: Array of predicted means.
+        pred: Array of predicted means.
         pred_std: Array of predicted standard deviations.
         target: Array of ground truth labels.
         **kwargs: Additional arguments (ignored).
@@ -323,6 +323,48 @@ def estimate_rmse(pred: Array, target: Array, **kwargs) -> Float:
 #     """
 #     del kwargs
 #     return jnp.sqrt(jnp.mean(jnp.power(pred - target, 2)))
+
+
+def crps_gaussian(
+    pred_mean: Array,
+    pred_std: Array,
+    target: Array,
+    *,
+    scaled: bool = True,
+) -> float:
+    """The negatively oriented continuous ranked probability score for Gaussians.
+
+    Negatively oriented means a smaller value is more desirable.
+
+    Args:
+        pred_mean: 1D array of the predicted means for the held out dataset.
+        pred_std: 1D array of he predicted standard deviations for the held out dataset.
+        target: 1D array of the true labels in the held out dataset.
+        scaled: Whether to scale the score by size of held out set.
+
+    Returns:
+        The crps for the heldout set.
+    """
+    # Ensure input arrays are 1D and of the same shape
+    if not (pred_mean.shape == pred_std.shape == target.shape):
+        msg = "arrays must have the same shape"
+        raise ValueError(msg)
+
+    # Compute crps
+    pred_std_flat = pred_std.flatten()
+    pred_norm = (target.flatten() - pred_mean.flatten()) / pred_std_flat
+    term_1 = 1 / jnp.sqrt(jnp.pi)
+    term_2 = 2 * jax.scipy.stats.norm.pdf(pred_norm, loc=0, scale=1)
+    term_3 = pred_norm * (2 * jax.scipy.stats.norm.cdf(pred_norm, loc=0, scale=1) - 1)
+
+    crps_list = -1 * pred_std_flat * (term_1 - term_2 - term_3)
+    crps = jnp.sum(crps_list)
+
+    # Potentially scale so that sum becomes mean
+    if scaled:
+        crps = crps / len(crps_list)
+
+    return crps
 
 
 def nll_gaussian(
