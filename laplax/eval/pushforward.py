@@ -366,7 +366,7 @@ def nonlin_samples(
     del kwargs
 
     pred_ensemble = aux.get("pred_ensemble")
-    results["pred_ensemble"] = util.tree.tree_slice(pred_ensemble, 0, num_samples)
+    results["samples"] = util.tree.tree_slice(pred_ensemble, 0, num_samples)
     return results, aux
 
 
