@@ -128,7 +128,9 @@ def create_ggn_mv_without_data(
     model_fn: ModelFn,
     params: Params,
     loss_fn: LossFn | str | Callable,
-    factor: Float,
+    factor=Float,
+    *,
+    has_batch: bool = True,
     **kwargs,
 ) -> Callable[[Params, Data], Params]:
     r"""Create Generalized Gauss-Newton (GGN) matrix-vector productwithout fixed data.
@@ -147,6 +149,7 @@ def create_ggn_mv_without_data(
         params: Model parameters.
         loss_fn: Loss function to use for the GGN computation.
         factor: Scaling factor for the GGN computation.
+        has_batch: Whether the data has a batch dimension.
         **kwargs: Additional arguments, including:
             - `lmap_ggn_mv`: Chunk size for iterating over data.
 
@@ -157,55 +160,32 @@ def create_ggn_mv_without_data(
     Note:
         The function assumes that the data has a batch dimension.
     """
+    del kwargs
 
-    def _jvp_fn(
-        params: Params, input: InputArray, vec: Params
-    ) -> tuple[PredArray, PredArray]:
-        def _local_model_fn(p):
-            return model_fn(input=input, params=p)
+    # Create loss Hessian-vector product
+    loss_fn_hessian_mv = create_loss_hessian_mv(loss_fn)
+    if has_batch:
+        loss_fn_hessian_mv = jax.vmap(loss_fn_hessian_mv)
 
-        return jax.jvp(_local_model_fn, (params,), (vec,))
+    def ggn_mv(vec, batch):
+        # Step 1: Single jvp for entire batch, if has_batch is True
+        def fwd(p):
+            if has_batch:
+                return jax.vmap(lambda x: model_fn(input=x, params=p))(batch["input"])
+            return model_fn(input=batch["input"], params=p)
 
-    def _vjp_fn(
-        params: Params, input: InputArray
-    ) -> tuple[PredArray, Callable[[PredArray], Params]]:
-        def _local_model_fn(p):
-            return model_fn(input=input, params=p)
+        # Step 2: Linearize the forward pass
+        z, jvp = jax.linearize(fwd, params)
 
-        pred, vjp_fn = jax.vjp(_local_model_fn, params)
-        return pred, lambda v: vjp_fn(v)[0]
+        # Step 3: Compute J^T H J v
+        HJv = loss_fn_hessian_mv(jvp(vec), pred=z, target=batch["target"])
 
-    loss_hessian_mv = create_loss_hessian_mv(loss_fn)
+        # Step 4: Compute the GGN vector
+        arr = jax.linear_transpose(jvp, vec)(HJv)[0]
 
-    def _mv_ggn_ptw(input: InputArray, target: TargetArray, vec: Params) -> Params:
-        """Calculate JT_p H_L J_p v for a single data point."""
-        pred, jv = _jvp_fn(params, input, vec)
-        hjv = loss_hessian_mv(jv, pred=pred, target=target)
-        gv = _vjp_fn(params, input)[1](hjv)
-        return gv
+        return mul(factor, arr)
 
-    def mv_ggn(vec: Params, data: Data) -> Params:
-        def _mv_ggn_ptw_w_vec(dp: Data) -> Params:
-            input, target = (
-                dp["input"],
-                dp["target"],
-            )  # TODO(2bys): Do we want this constrain?
-            return _mv_ggn_ptw(input, target, vec)
-
-        return mul(
-            factor,
-            jax.lax.psum(
-                lmap(
-                    _mv_ggn_ptw_w_vec,
-                    data,
-                    batch_size=kwargs.get("lmap_ggn_mv", "data"),
-                ),
-                axis_name=0,
-            ),
-        )  # TODO(any): Should we handle the case factor=1. as a identity map?
-        # (Possibly in util.tree.mul directly.)
-
-    return mv_ggn
+    return ggn_mv
 
 
 def create_ggn_mv(
