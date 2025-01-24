@@ -1,9 +1,11 @@
 """Utilities for handling DataLoaders/Iterables instead of single batches."""
 
 import operator
+import time
 
 import jax
 import jax.numpy as jnp
+from loguru import logger
 
 from laplax.types import Any, Array, Callable, Data, Iterable, PyTree
 from laplax.util.tree import add
@@ -167,9 +169,18 @@ def process_batches(
     """
     state = None
     result = None
-    for batch in data_loader:
-        result = function(*args, data=transform(batch), **kwargs)
+    max_num_of_batches = kwargs.pop("max_num_of_batches", None)
+    for i, batch in enumerate(data_loader, start=1):
+        if max_num_of_batches is not None and i > max_num_of_batches:
+            break
+        start_time = time.time()
+        result = function(*args, batch=transform(batch), **kwargs)
         result, state = reduce(result, state)
+        elapsed_time = time.time() - start_time
+        batch_info = f"batch {i}" + (
+            f" of {max_num_of_batches}" if max_num_of_batches else ""
+        )
+        logger.info(f"Processed {batch_info} in {elapsed_time:.2f} seconds")
     if result is None:
         msg = "data loader was empty"
         raise ValueError(msg)
@@ -216,6 +227,7 @@ def wrap_function_with_data_loader(
     reduce: Callable = reduce_online_mean,
     *,
     jit: bool = False,
+    **kwargs,
 ) -> Callable:
     """Wrap a function to process batches with a data loader.
 
@@ -236,7 +248,9 @@ def wrap_function_with_data_loader(
     """
     fn = jax.jit(function) if jit else function
 
-    def wrapped(*args, **kwargs):
-        return process_batches(fn, data_loader, transform, reduce, *args, **kwargs)
+    def wrapped(*args, **local_kwargs):
+        return process_batches(
+            fn, data_loader, transform, reduce, *args, **kwargs, **local_kwargs
+        )
 
     return wrapped
