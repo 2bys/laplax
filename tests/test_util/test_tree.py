@@ -70,6 +70,7 @@ def test_single_input_functions(test_case, func):
     [func for name, func in tree_functions if len(inspect.signature(func).parameters) == 2],
     ids=[name for name, func in tree_functions if len(inspect.signature(func).parameters) == 2]
 )
+
 def test_two_input_functions(test_case, func):
     """
     Test each two-input function in the tree module with random PyTrees.
@@ -78,15 +79,17 @@ def test_two_input_functions(test_case, func):
     pytree2, vector2 = test_case[1]
 
     result = func(pytree1, pytree2)
-    flatten_result, _ = create_pytree_flattener(result)
 
     if func.__name__ == "add":
+        flatten_result, _ = create_pytree_flattener(result)
         expected_vector = vector1 + vector2
+        assert jnp.allclose(flatten_result(result), expected_vector)
     elif func.__name__ == "sub":
+        flatten_result, _ = create_pytree_flattener(result)
         expected_vector = vector1 - vector2
+        assert jnp.allclose(flatten_result(result), expected_vector)
+    elif func.__name__ == "allclose":
+        assert result == jnp.allclose(vector1, vector2)
     else:
         pytest.fail(f"Unknown behavior for function {func.__name__}")
 
-    assert jnp.allclose(flatten_result(result), expected_vector), (
-        f"{func.__name__} failed for two PyTrees"
-    )
