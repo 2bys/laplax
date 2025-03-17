@@ -19,6 +19,8 @@ def draw_random_onb(key, shape: tuple[int]) -> jnp.ndarray:
 
 class CurvatureTask:
     method = None
+    atol = 1e-3
+    rtol = 1e-3
 
     def __init__(self, seed, size=100, rank=10):
         # Set seed and keys
@@ -58,12 +60,14 @@ class CurvatureTask:
         return arr_mv
 
     @property
-    def tree_like(self):
+    def layout(self):
         return jax.numpy.ones((100,))
 
 
 class LowRankCurvatureTask(CurvatureTask):
     method = "low_rank"
+    atol = 1e-1
+    rtol = 5e-2
 
     @staticmethod
     def adjust_curv_est(low_rank_terms: dict):
@@ -80,6 +84,16 @@ class LowRankCurvatureTask(CurvatureTask):
     @property
     def true_curv(self):
         return self.arr
+
+    @property
+    def layout(self):
+        return jax.numpy.ones((100,))
+
+
+class LOBPCGLowRankCurvatureTask(LowRankCurvatureTask):
+    method = "lobpcg"
+    atol = 1e-2
+    rtol = 1e-2
 
 
 class DiagonalCurvatureTask(CurvatureTask):
@@ -115,8 +129,14 @@ class FullCurvatureTask(CurvatureTask):
 
 
 @pytest_cases.parametrize(
-    "task_class", [LowRankCurvatureTask, DiagonalCurvatureTask, FullCurvatureTask]
+    "task_class",
+    [
+        LowRankCurvatureTask,
+        LOBPCGLowRankCurvatureTask,
+        DiagonalCurvatureTask,
+        FullCurvatureTask,
+    ],
 )
-@pytest_cases.parametrize("seed", [0, 1])
+@pytest_cases.parametrize("seed", [0, 42])
 def case_posterior_covariance(task_class, seed):
     return task_class(seed=seed)

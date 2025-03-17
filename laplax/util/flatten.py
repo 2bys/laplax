@@ -2,6 +2,7 @@
 
 import math
 from collections.abc import Generator
+from functools import singledispatch
 
 import jax
 import jax.numpy as jnp
@@ -147,6 +148,7 @@ def unravel_array_into_pytree(pytree: PyTree, axis: int, arr: Array) -> PyTree:
     return jax.tree.unflatten(treedef, reshaped_parts)
 
 
+@singledispatch
 def wrap_function(
     fn: Callable,
     input_fn: Callable | None = None,

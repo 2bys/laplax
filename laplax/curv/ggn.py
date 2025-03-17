@@ -160,18 +160,18 @@ def create_ggn_mv_without_data(
     if has_batch:
         loss_fn_hessian_mv = jax.vmap(loss_fn_hessian_mv)
 
-    def ggn_mv(vec, batch):
+    def ggn_mv(vec, data):
         # Step 1: Single jvp for entire batch, if has_batch is True
         def fwd(p):
             if has_batch:
-                return jax.vmap(lambda x: model_fn(input=x, params=p))(batch["input"])
-            return model_fn(input=batch["input"], params=p)
+                return jax.vmap(lambda x: model_fn(input=x, params=p))(data["input"])
+            return model_fn(input=data["input"], params=p)
 
         # Step 2: Linearize the forward pass
         z, jvp = jax.linearize(fwd, params)
 
         # Step 3: Compute J^T H J v
-        HJv = loss_fn_hessian_mv(jvp(vec), pred=z, target=batch["target"])
+        HJv = loss_fn_hessian_mv(jvp(vec), pred=z, target=data["target"])
 
         # Step 4: Compute the GGN vector
         arr = jax.linear_transpose(jvp, vec)(HJv)[0]

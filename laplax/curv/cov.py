@@ -1,14 +1,16 @@
 """Posterior covariance functions for various curvature estimates."""
 
 from dataclasses import dataclass
+from functools import partial
 
 import jax
 import jax.numpy as jnp
 from loguru import logger
 
-from laplax import util
-from laplax.curv.low_rank import LowRankTerms, get_low_rank_approximation
-from laplax.enums import CurvApprox
+from laplax.curv.lanczos import lanczos_lowrank
+from laplax.curv.lobpcg import lobpcg_lowrank
+from laplax.curv.utils import LowRankTerms
+from laplax.enums import CurvApprox, LowRankMethod
 from laplax.types import (
     Any,
     Array,
@@ -299,30 +301,41 @@ def diag_state_to_cov(
 
 
 def create_low_rank_curvature(
-    mv: CurvatureMV, layout: Layout, **kwargs
+    mv: CurvatureMV,
+    layout: Layout,
+    low_rank_method: LowRankMethod = LowRankMethod.LANCZOS,
+    **kwargs,
 ) -> LowRankTerms:
-    """Generate a low-rank curvature approximations.
+    """Generate a low-rank curvature approximation.
 
     The low-rank curvature is computed as an approximation to the full curvature
-    matrix using the provided matrix-vector product function and the LOBPCG algorithm.
+    matrix using the provided matrix-vector product function and either the Lanczos
+    or LOBPCG algorithm.
 
     Args:
         mv: Matrix-vector product function representing the curvature.
         layout: Structure defining the parameter layout that is assumed by the
             matrix-vector product function.
-        **kwargs: Additional arguments (unused).
+        low_rank_method: Method to use for computing the low-rank approximation.
+            Can be either "lanczos" or "lobpcg". Defaults to "lanczos".
+        **kwargs: Additional arguments passed to the low-rank method.
 
     Returns:
         A LowRankTerms object representing the low-rank curvature approximation.
     """
-    flatten, unflatten = create_pytree_flattener(layout)
-    nparams = util.tree.get_size(layout)
-    mv = jax.vmap(
-        wrap_function(fn=mv, input_fn=unflatten, output_fn=flatten),
-        in_axes=-1,
-        out_axes=-1,
-    )  # Turn mv into matmul structure.
-    low_rank_terms = get_low_rank_approximation(mv, size=nparams, **kwargs)
+    # flatten, unflatten = create_pytree_flattener(layout)
+    # nparams = util.tree.get_size(layout)
+    # mv = jax.vmap(
+    #     wrap_function(fn=mv, input_fn=unflatten, output_fn=flatten),
+    #     in_axes=-1,
+    #     out_axes=-1,
+    # )  # Turn mv into matmul structure.
+
+    # Select and apply the low-rank method.
+    low_rank_terms = {
+        LowRankMethod.LANCZOS: lanczos_lowrank,
+        LowRankMethod.LOBPCG: lobpcg_lowrank,
+    }[low_rank_method](mv, layout=layout, **kwargs)
 
     return low_rank_terms
 
@@ -475,30 +488,37 @@ CURVATURE_METHODS: dict[CurvatureKeyType, Callable] = {
     CurvApprox.FULL: create_full_curvature,
     CurvApprox.DIAGONAL: create_diagonal_curvature,
     CurvApprox.LOW_RANK: create_low_rank_curvature,
+    CurvApprox.LOBPCG: partial(
+        create_low_rank_curvature, low_rank_method=LowRankMethod.LOBPCG
+    ),
 }
 
 CURVATURE_PRIOR_METHODS: dict[CurvatureKeyType, Callable] = {
     CurvApprox.FULL: full_with_prior,
     CurvApprox.DIAGONAL: diag_with_prior,
     CurvApprox.LOW_RANK: low_rank_with_prior,
+    CurvApprox.LOBPCG: low_rank_with_prior,
 }
 
 CURVATURE_TO_POSTERIOR_STATE: dict[CurvatureKeyType, Callable] = {
     CurvApprox.FULL: full_prec_to_state,
     CurvApprox.DIAGONAL: diag_prec_to_state,
     CurvApprox.LOW_RANK: low_rank_prec_to_state,
+    CurvApprox.LOBPCG: low_rank_prec_to_state,
 }
 
 CURVATURE_STATE_TO_SCALE: dict[CurvatureKeyType, Callable] = {
     CurvApprox.FULL: full_state_to_scale,
     CurvApprox.DIAGONAL: diag_state_to_scale,
     CurvApprox.LOW_RANK: low_rank_state_to_scale,
+    CurvApprox.LOBPCG: low_rank_state_to_scale,
 }
 
 CURVATURE_STATE_TO_COV: dict[CurvatureKeyType, Callable] = {
     CurvApprox.FULL: full_state_to_cov,
     CurvApprox.DIAGONAL: diag_state_to_cov,
     CurvApprox.LOW_RANK: low_rank_state_to_cov,
+    CurvApprox.LOBPCG: low_rank_state_to_cov,
 }
 
 

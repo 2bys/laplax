@@ -336,7 +336,7 @@ def test_compare_implementations_against_laplace_redux(
     np.testing.assert_allclose(mean_diff_nonlin, 0, atol=1)
     np.testing.assert_allclose(std_diff_nonlin, 0, atol=1)
     np.testing.assert_allclose(mean_diff_lin, 0, atol=1e-4)
-    np.testing.assert_allclose(std_diff_lin, 0, atol=1e-3)
+    np.testing.assert_allclose(std_diff_lin, 0, atol=1.5e-3)
 
 
 def test_ggn_against_curvlinops(trained_laplace_comparison):

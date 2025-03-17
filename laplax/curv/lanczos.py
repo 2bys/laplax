@@ -1,259 +1,197 @@
-# Copyright 2022 The JAX Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# Modifications:
-# This implementation extends the original JAX sparse linear algebra routines
-# with the following features:
-# - Support for mixed precision in matrix-vector products.
-# - Handling of non-jittable operators using Python-level control flow.
-# - Customizable eigenvalue computations using LOBPCG.
-#
-# The original source code can be found at:
-# https://github.com/jax-ml/jax/blob/main/jax/experimental/sparse/linalg.py
-
-"""Mixed-Precision Optional-Non-Jittable LOBPCG Wrapper for Sparse Linear Algebra.
-
-This module provides an implementation of the Locally Optimal Block
-Preconditioned Conjugate Gradient (LOBPCG) method for finding eigenvalues
-and eigenvectors of large Hermitian matrices. The implementation relies on the
-JAX experimental sparse linear algebra package  but extends its functionality
-to support:
-
-1. **Mixed Precision Arithmetic:**
-   - Computations inside the algorithm (such as orthonormalization,
-     matrix-vector products, and eigenvalue updates) can be performed
-     using higher precision (e.g., `float64`), to maintain numerical
-     stability in critical steps.
-   - Matrix-vector products involving the operator `A` can be computed
-     in higher precision (e.g., `float32`) to reduce memory
-     usage and computation time.
-
-
-2. **Non-Jittable Operator Support:**
-   - The implementation supports `A` as a non-jittable callable, enabling
-     the use of external libraries such as `scipy.sparse.linalg` for
-     matrix-vector products. This is essential for cases where `A`
-     cannot be expressed using JAX primitives (e.g., external libraries
-     or precompiled solvers).
-
-### Why this Wrapper?
-
-The primary motivation for this implementation is to work around limitations
-in the JAX `lax.while_loop` and sparse linear algebra primitives, which require
-`A` to be jittable. By decoupling `A` from the main loop, we can support a
-broader range of operators while still leveraging the performance advantages
-of JAX-accelerated numerical routines where possible.
-"""
-
 import jax
 import jax.numpy as jnp
-from jax.experimental.sparse import linalg
-from jax.experimental.sparse.linalg import (
-    _check_inputs,  # noqa: PLC2701
-    _eigh_ascending,  # noqa: PLC2701
-    _mm,  # noqa: PLC2701
-)
 
-from laplax.types import Array, Callable, DType
+from laplax.curv.utils import LowRankTerms, get_matvec
+from laplax.types import Array, Callable, DType, Float, KeyType, Layout
+from laplax.util.flatten import wrap_function
 
 
-def lobpcg_standard(
-    A: Callable[[jax.Array], jax.Array],
-    X: jax.Array,
-    m: int = 100,
-    tol: jax.Array | float | None = None,
-    calc_dtype: DType = jnp.float64,
-    a_dtype: DType = jnp.float32,
+def lanczos_iterations(
+    matvec: Callable[[Array], Array],
+    b: jax.Array,
     *,
-    A_jittable: bool = True,
-) -> tuple[jax.Array, jax.Array, int]:
-    """Compute top-k eigenvalues using LOBPCG with mixed precision.
+    maxiter: int = 20,
+    tol: Float = 1e-6,
+    full_reorthogonalize: bool = True,
+    dtype: DType = jnp.float64,
+) -> tuple[Array, Array, Array]:
+    """Runs Lanczos iterations starting from vector b.
 
     Args:
-      A: callable representing the Hermitian matrix operation A(x).
-      X: initial guess (n, k) array.
-      m: max iterations
-      tol: tolerance for convergence
-      calc_dtype: dtype for internal calculations (float32 or float16)
-      a_dtype: dtype for A calls (e.g., float64 for stable matrix-vector products)
-      A_jittable: Then pass the computation to
-            `jax.experimental.sparse.linalg.lobpcg_standard`.
+        matvec: A callable that computes A @ x.
+        b: Starting vector.
+        maxiter: Number of iterations.
+        tol: Tolerance to detect convergence.
+        full_reorthogonalize: If True, reorthogonalize at every step.
+        dtype: Data type for the Lanczos scalars/vectors.
 
     Returns:
-        Tuple containing:
-            - Eigenvalues: Array of shape (k,)
-            - Eigenvectors: Array of shape (n, k)
-            - Iterations: Number of iterations performed
+        alpha: 1D array of Lanczos scalars (diagonal of T).
+        beta: 1D array of off-diagonals (with beta[-1] not used).
+        V: 2D array (maxiter+1 x input_dim) of Lanczos vectors.
     """
-    if A_jittable:
-        return linalg.lobpcg_standard(A, X, m, tol)
+    b = jnp.asarray(b, dtype=dtype)
+    b_norm = jnp.linalg.norm(b, 2)
+    v0 = b / b_norm
 
-    n, k = X.shape
-    _check_inputs(A, X)
+    alpha = jnp.zeros(maxiter, dtype=dtype)
+    beta = jnp.zeros(maxiter, dtype=dtype)
+    V = jnp.zeros((maxiter + 1, b.shape[0]), dtype=dtype)
+    V = V.at[0].set(v0)
 
-    if tol is None:
-        tol = jnp.finfo(calc_dtype).eps
+    def reorthogonalize(w: Array, V: Array, i: int) -> Array:
+        def body_fn(j: int, w_acc: Array) -> Array:
+            coeff = jnp.dot(V[j], w_acc)
+            return w_acc - coeff * V[j]
 
-    # Convert initial vectors to computation dtype
-    X = X.astype(calc_dtype)
+        return jax.lax.fori_loop(0, i, body_fn, w)
 
-    X = _orthonormalize(X, calc_dtype=calc_dtype)
-    P = _extend_basis(X, X.shape[1], calc_dtype=calc_dtype)
+    def _body_fn(carry, i):
+        v, alpha, beta, V = carry
+        w = matvec(v)
+        a = jnp.dot(v, w)
+        w = w - a * v
+        if full_reorthogonalize:
+            w = reorthogonalize(w, V, i)
+            # w = reorthogonalize(w, V, i)
 
-    # Precompute initial AX outside of jit
-    # Cast to a_dtype before A and back to calc_dtype after
-    AX = A(X.astype(a_dtype)).astype(calc_dtype)
-    theta = jnp.sum(X * AX, axis=0, keepdims=True)
-    R = AX - theta * X
+        b_val = jnp.linalg.norm(w, 2)
+        b_val = jnp.where(b_val < tol, 0.0, b_val)
+        v_next = jax.lax.cond(
+            b_val > 0,  # type: ignore[operator]
+            lambda _: w / b_val,
+            lambda _: v,  # In degenerate cases, no progress is made.
+            operand=None,
+        )
+        alpha = alpha.at[i].set(a)
+        beta = beta.at[i].set(b_val)
+        V = V.at[i + 1].set(v_next)
+        return (v_next, alpha, beta, V), None
 
-    # JIT-ted iteration step that takes AX, AXPR, AS, etc. in calc_dtype
-    @jax.jit
-    def _iteration_first_step(X, P, R, AS):
-        # Projected eigensolve
-        XPR = jnp.concatenate((X, P, R), axis=1)
-        theta, Q = _rayleigh_ritz_orth(AS, XPR)
-
-        # Eigenvector X extraction
-        B = Q[:, :k]
-        normB = jnp.linalg.norm(B, ord=2, axis=0, keepdims=True)
-        B /= normB
-        X = _mm(XPR, B)
-        normX = jnp.linalg.norm(X, ord=2, axis=0, keepdims=True)
-        X /= normX
-
-        # Difference terms P extraction
-        q, _ = jnp.linalg.qr(Q[:k, k:].T)
-        diff_rayleigh_ortho = _mm(Q[:, k:], q)
-        P = _mm(XPR, diff_rayleigh_ortho)
-        normP = jnp.linalg.norm(P, ord=2, axis=0, keepdims=True)
-        P /= jnp.where(normP == 0, 1.0, normP)
-
-        return X, P, R, theta
-
-    @jax.jit
-    def _iteration_second_step(X, R, theta, AX, n, tol):
-        # # Compute new residuals.
-        # AX = A(X)
-        R = AX - theta[jnp.newaxis, :k] * X
-        resid_norms = jnp.linalg.norm(R, ord=2, axis=0)
-
-        # Compute residual norms
-        reltol = jnp.linalg.norm(AX, ord=2, axis=0) + theta[:k]
-        reltol *= n
-        # Allow some margin for a few element-wise operations.
-        reltol *= 10
-        res_converged = resid_norms < tol * reltol
-        converged = jnp.sum(res_converged)
-
-        return X, R, theta[jnp.newaxis, :k], converged
-
-    @jax.jit
-    def _projection_step(X, P, R):
-        R = _project_out(jnp.concatenate((X, P), axis=1), R)
-        return R, jnp.concatenate((X, P, R), axis=1)
-
-    i = 0
-    converged = 0
-    while i < m and converged < k:
-        # Residual basis selection
-        R, XPR = _projection_step(X, P, R)
-
-        # Compute AS = AXPR = A(XPR) outside JIT at a_dtype
-        AS = A(XPR.astype(a_dtype)).astype(calc_dtype)
-
-        # Call the first iteration step
-        X, P, R, theta = _iteration_first_step(X, P, R, AS)
-
-        # Calculate AX
-        AX = A(X.astype(a_dtype)).astype(calc_dtype)
-
-        # Call the second iteration step
-        X, R, theta, converged = _iteration_second_step(X, R, theta, AX, n, tol)
-
-        i += 1
-
-    return theta[0, :], X, i
+    init_carry = (v0, alpha, beta, V)
+    indices = jnp.arange(maxiter)
+    (_, alpha, beta, V), _ = jax.lax.scan(_body_fn, init_carry, indices)
+    return alpha, beta, V
 
 
-def _orthonormalize(X: Array, calc_dtype: DType) -> Array:
-    # Orthonormalize in calc_dtype
-    for _ in range(2):
-        X = _svqb(X, calc_dtype=calc_dtype)
-    return X
+def construct_tridiagonal(alpha: Array, beta: Array) -> Array:
+    """Constructs the symmetric tridiagonal matrix from Lanczos scalars.
+
+    Args:
+        alpha: Diagonal elements.
+        beta: Off-diagonal elements (only beta[:k-1] are used).
+
+    Returns:
+        A k x k symmetric tridiagonal matrix T.
+    """
+    k = alpha.shape[0]
+    T = jnp.zeros((k, k), dtype=alpha.dtype)
+    T = T.at[jnp.arange(k), jnp.arange(k)].set(alpha)
+    # Only the first k-1 values of beta are used.
+    T = T.at[jnp.arange(k - 1), jnp.arange(1, k)].set(beta[: k - 1])
+    T = T.at[jnp.arange(1, k), jnp.arange(k - 1)].set(beta[: k - 1])
+    return T
 
 
-def _svqb(X: Array, calc_dtype: DType) -> Array:
-    X = X.astype(calc_dtype)
-    norms = jnp.linalg.norm(X, ord=2, axis=0, keepdims=True)
-    X /= jnp.where(norms == 0, 1.0, norms)
+def compute_eigendecomposition(
+    alpha: Array, beta: Array, V: Array, *, compute_vectors: bool = False
+) -> Array | tuple[Array, Array]:
+    """Computes the eigendecomposition of the tridiagonal matrix generated by Lanczos.
 
-    inner = X.T @ X
-    w, V = _eigh_ascending(inner)
-    tau = jnp.finfo(inner.dtype).eps * w[0]
-    padded = jnp.maximum(w, tau)
-    sqrted = jnp.where(tau > 0, padded, 1.0) ** (-0.5)
-    scaledV = V * sqrted[jnp.newaxis, :]
-    orthoX = X @ scaledV
+    Args:
+        alpha: Diagonal elements.
+        beta: Off-diagonal elements.
+        V: Lanczos vectors.
+        compute_vectors: If True, compute Ritz vectors in the original space.
 
-    keep = ((w > tau) * (jnp.diag(inner) > 0.0))[jnp.newaxis, :]
-    orthoX *= keep.astype(orthoX.dtype)
-    norms = jnp.linalg.norm(orthoX, ord=2, axis=0, keepdims=True)
-    keep *= norms > 0.0
-    orthoX /= jnp.where(keep, norms, 1.0)
-    return orthoX.astype(calc_dtype)
+    Returns:
+        If compute_vectors is True: (eigvals, ritz_vectors),
+        else: eigvals.
+    """
+    T = construct_tridiagonal(alpha, beta)
+    if compute_vectors:
+        eigvals, eigvecs = jnp.linalg.eigh(T)
+        # Use the first maxiter Lanczos vectors (exclude the extra one).
+        V_matrix = V[:-1].T  # shape: (input_dim, maxiter)
+        ritz_vectors = jnp.dot(V_matrix, eigvecs)
+        return eigvals, ritz_vectors
+    eigvals = jnp.linalg.eigvalsh(T)
+    return eigvals
 
 
-def _extend_basis(X: Array, m: int, calc_dtype: DType) -> Array:
-    n, k = X.shape
-    Xupper, Xlower = jnp.split(X, [k], axis=0)
-    u, s, vt = jnp.linalg.svd(Xupper)
-    y = jnp.concatenate([Xupper + u @ vt, Xlower], axis=0)
-    other = jnp.concatenate(
-        [jnp.eye(m, dtype=calc_dtype), jnp.zeros((n - k - m, m), dtype=calc_dtype)],
-        axis=0,
+def lanczos_lowrank(
+    A: Callable[[Array], Array] | Array,
+    *,
+    key: KeyType,
+    layout: Layout | None = None,
+    rank: int = 20,
+    tol: float = 1e-6,
+    mv_dtype: DType = jnp.float32,
+    calc_dtype: DType = jnp.float64,
+    return_dtype: DType | None = None,
+    mv_jittable: bool = True,
+    full_reorthogonalize: bool = True,
+    **kwargs,
+) -> LowRankTerms:
+    """Compute a low-rank approximation using the Lanczos algorithm.
+
+    Args:
+        A: Matrix or callable representing the matrix-vector product.
+        key: PRNG key for random initialization.
+        layout: Dimension of input vector (required if A is callable).
+        rank: Number of leading eigenpairs to compute.
+        tol: Convergence tolerance for the algorithm.
+        mv_dtype: Data type for matrix-vector products.
+        calc_dtype: Data type for internal calculations.
+        return_dtype: Data type for returned results.
+        mv_jittable: If True, enables JIT compilation of matrix-vector products.
+        full_reorthogonalize: Whether to perform full reorthogonalization.
+        **kwargs: Additional arguments (ignored).
+
+    Returns:
+        LowRankTerms: A dataclass containing:
+            - U: Eigenvectors as a matrix of shape (size, rank)
+            - S: Eigenvalues as an array of length rank
+            - scalar: Scalar factor, initialized to 0.0
+    """
+    del kwargs
+
+    # Obtain a uniform matrix-vector multiplication function.
+    matvec, size = get_matvec(A, layout=layout, jit=mv_jittable)
+
+    # Initialize handling mixed precision.
+    is_compute_in_float64 = jax.config.read("jax_enable_x64")
+    if jnp.float64 in {mv_dtype, calc_dtype, return_dtype}:
+        jax.config.update("jax_enable_x64", True)
+
+    # Infer return_dtype.
+    if return_dtype is None:
+        return_dtype = jnp.float64 if is_compute_in_float64 else jnp.float32
+
+    # Wrap to_dtype around mv if necessary.
+    if mv_dtype != calc_dtype:
+        matvec = wrap_function(
+            matvec,
+            input_fn=lambda x: jnp.asarray(x, dtype=mv_dtype),
+            output_fn=lambda x: jnp.asarray(x, dtype=calc_dtype),
+        )
+
+    # Initialize random starting vector.
+    b = jax.random.normal(key, (size,), dtype=calc_dtype)
+
+    # Run Lanczos iterations.
+    alpha, beta, V = lanczos_iterations(
+        matvec, b, maxiter=rank, tol=tol, full_reorthogonalize=full_reorthogonalize
     )
-    w = y @ (vt.T * ((2 * (1 + s)) ** (-1 / 2))[jnp.newaxis, :])
-    h = -2 * jnp.linalg.multi_dot([w, w[k:, :].T, other])
-    return h.at[k:].add(other).astype(calc_dtype)
+    eigvals, eigvecs = compute_eigendecomposition(alpha, beta, V, compute_vectors=True)
 
+    # Prepare and convert the results
+    low_rank_result = LowRankTerms(
+        U=jnp.asarray(eigvecs, dtype=return_dtype),
+        S=jnp.asarray(eigvals, dtype=return_dtype),
+        scalar=jnp.asarray(0.0, dtype=return_dtype),
+    )
 
-def _project_out(basis: Array, U: Array) -> Array:
-    """Derives component of U in the orthogonal complement of basis."""
-    for _ in range(2):
-        U -= _mm(basis, _mm(basis.T, U))
-        U = _orthonormalize(U, U.dtype)
-
-    # Zero out any columns that are even remotely suspicious, so the invariant that
-    # that [basis, U] is zero-or-orthogonal is ensured.
-    for _ in range(2):
-        U -= _mm(basis, _mm(basis.T, U))
-    normU = jnp.linalg.norm(U, ord=2, axis=0, keepdims=True)
-    U *= (normU >= 0.99).astype(U.dtype)
-
-    return U
-
-
-def _rayleigh_ritz_orth(AS: Array, S: Array) -> tuple[Array, Array]:
-    """Solve the Rayleigh-Ritz problem for `A` projected to `S`.
-
-    This identifies `w, V` which satisfies:
-
-    (1) `S.T A S V ~= diag(w) V`
-    (2) `V` is standard orthonormal.
-    """
-    SAS = _mm(S.T, AS)
-
-    # Solve the projected subsystem
-    # If we could tell to eigh to stop after first k, we would.
-    return _eigh_ascending(SAS)
+    # Restore the original configuration dtype
+    jax.config.update("jax_enable_x64", is_compute_in_float64)
+    return low_rank_result
