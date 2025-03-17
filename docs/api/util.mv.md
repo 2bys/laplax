@@ -6,4 +6,4 @@ The matrix-vector module provides utilities for matrix-free operations with matr
 
 ::: laplax.util.mv.diagonal
 
-::: laplax.util.mv.todense
+::: laplax.util.mv.to_dense

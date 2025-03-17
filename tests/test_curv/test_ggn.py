@@ -8,7 +8,6 @@ import pytest_cases
 
 from laplax.curv.ggn import create_ggn_mv, create_loss_hessian_mv
 from laplax.enums import LossFn
-from laplax.util.ops import lmap
 
 from .cases.rosenbrock import RosenbrockCase
 
@@ -98,7 +97,7 @@ def test_ggn_rosenbrock(rosenbrock):
     )
 
     # Compute the GGN
-    ggn_calc = lmap(ggn_mv, jnp.eye(2))
+    ggn_calc = jax.lax.map(ggn_mv, jnp.eye(2))
 
     # Compare with the manual GGN
     ggn_manual = rosenbrock.ggn_manual

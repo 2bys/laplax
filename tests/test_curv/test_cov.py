@@ -95,7 +95,7 @@ def test_posterior_covariance_est(task):
 
     # Get and test scale matrix
     scale_mv = CURVATURE_STATE_TO_SCALE[task.method](state)
-    scale_dense = util.mv.todense(scale_mv, layout=task.tree_like)
+    scale_dense = util.mv.to_dense(scale_mv, layout=task.tree_like)
     assert jnp.allclose(
         scale_dense @ scale_dense.T @ prec_dense,
         jnp.eye(task.size),
@@ -105,7 +105,7 @@ def test_posterior_covariance_est(task):
 
     # Get and test covariance matrix
     cov_mv = CURVATURE_STATE_TO_COV[task.method](state)
-    cov_dense = util.mv.todense(cov_mv, layout=task.tree_like)
+    cov_dense = util.mv.to_dense(cov_mv, layout=task.tree_like)
     assert jnp.allclose(
         cov_dense @ prec_dense, jnp.eye(task.size), atol=1e-2, rtol=1e-2
     )

@@ -7,7 +7,6 @@ import jax.numpy as jnp
 
 from laplax import util
 from laplax.types import Array, Layout, PyTree
-from laplax.util.ops import lmap
 from laplax.util.tree import (
     basis_vector_from_index,
     eye_like,
@@ -67,7 +66,7 @@ def diagonal(mv: Callable | jnp.ndarray, layout: Layout | None = None) -> Array:
     ])
 
 
-def todense(mv: Callable, layout: Layout, **kwargs) -> Array:
+def to_dense(mv: Callable, layout: Layout, **kwargs) -> Array:
     """Generate a dense matrix representation from a matrix-vector product function.
 
     Converts a matrix-vector product function into its equivalent dense matrix form
@@ -80,7 +79,7 @@ def todense(mv: Callable, layout: Layout, **kwargs) -> Array:
             - PyTree: The structure for input to the MVP.
             - None: Defaults to an identity-like structure.
         **kwargs: Additional options:
-            - `lmap_dense`: Batch size for applying the MVP function.
+            - `to_dense_batch_size`: Batch size for applying the MVP function.
 
     Returns:
         jax.Array: A dense matrix representation of the MVP function.
@@ -98,5 +97,6 @@ def todense(mv: Callable, layout: Layout, **kwargs) -> Array:
         raise TypeError(msg)
 
     return jax.tree.map(
-        jnp.transpose, lmap(mv, identity, batch_size=kwargs.get("lmap_dense", "mv"))
-    )  # Lmap shares along the first axis (rows instead of columns).
+        jnp.transpose,
+        jax.lax.map(mv, identity, batch_size=kwargs.get("to_dense_batch_size")),
+    )  # jax.lax.map shares along the first axis (rows instead of columns).

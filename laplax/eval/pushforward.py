@@ -19,7 +19,7 @@ from laplax.eval.predictives import (
     mean_field_1_predictive,
     mean_field_2_predictive,
 )
-from laplax.eval.utils import finalize_functions
+from laplax.eval.utils import finalize_fns
 from laplax.types import (
     Any,
     Array,
@@ -35,7 +35,7 @@ from laplax.types import (
     PredArray,
     PriorArguments,
 )
-from laplax.util.ops import lmap, precompute_list
+from laplax.util.ops import precompute_list
 from laplax.util.tree import add
 
 # -------------------------------------------------------------------------
@@ -57,7 +57,8 @@ def set_get_weight_sample(key, mean_params, scale_mv, num_samples, **kwargs):
         scale_mv: Function for the scale matrix-vector product.
         num_samples: Number of weight samples to generate.
         **kwargs: Additional arguments, including:
-            - `precompute_samples`: Controls whether samples are precomputed.
+            - `set_get_weight_sample_precompute`: Controls whether samples are
+              precomputed.
 
     Returns:
         Callable: A function that generates a specific weight sample by index.
@@ -70,14 +71,16 @@ def set_get_weight_sample(key, mean_params, scale_mv, num_samples, **kwargs):
     return precompute_list(
         get_weight_sample,
         jnp.arange(num_samples),
-        option=kwargs.get("precompute_samples", "samples"),
+        precompute=kwargs.get(
+            "set_get_weight_sample_precompute", kwargs.get("precompute")
+        ),
+        **kwargs,
     )
 
 
-def special_pred(
+def special_pred_act(
     results: dict[str, Array],
     aux: dict[str, Any],
-    name: str,
     linearized: bool,
     **kwargs,
 ) -> tuple[dict[str, Array], dict[str, Any]]:
@@ -90,7 +93,7 @@ def special_pred(
 
     if "pred_mean" not in results:
         pred_mean_fn = lin_pred_mean if linearized else nonlin_pred_mean
-        results, aux = pred_mean_fn(results, aux, "pred_mean", **kwargs)
+        results, aux = pred_mean_fn(results, aux, **kwargs)
 
     pred_mean = results["pred_mean"]
 
@@ -100,7 +103,7 @@ def special_pred(
         pred_fn = var_pred_dict[special_pred_type]
 
         if "pred_var" not in results:  # Fall back to `lin_pred_var`
-            results, aux = lin_pred_var(results, aux, "pred_var", **kwargs)
+            results, aux = lin_pred_var(results, aux, **kwargs)
 
         pred_var = results["pred_var"]
 
@@ -112,13 +115,13 @@ def special_pred(
 
         if "pred_cov" not in results:
             pred_cov = lin_pred_cov if linearized else nonlin_pred_cov
-            results, aux = pred_cov(results, aux, "pred_cov")
+            results, aux = pred_cov(results, aux)
 
         pred_cov = results["pred_cov"]
 
         pred = pred_fn(pred_mean, pred_cov)
 
-    results[name] = pred
+    results["special_pred_act"] = pred
 
     return results, aux
 
@@ -136,6 +139,7 @@ def get_dist_state(
     linearized: bool = False,
     num_samples: int = 0,
     key: KeyType | None = None,
+    **kwargs,
 ) -> DistState:
     """Construct the distribution state for uncertainty propagation.
 
@@ -150,6 +154,8 @@ def get_dist_state(
         linearized: Whether to consider a linearized approximation.
         num_samples: Number of weight samples for Monte Carlo methods.
         key: PRNG key for generating random samples.
+        **kwargs: Additional arguments, including:
+            - `set_get_weight_sample_precompute`.
 
     Returns:
         DistState: A dictionary containing functions and parameters for uncertainty
@@ -189,6 +195,7 @@ def get_dist_state(
             mean_params=weight_sample_mean,
             scale_mv=posterior_state.scale_mv(posterior_state.state),
             num_samples=num_samples,
+            **kwargs,
         )
         dist_state["get_weight_samples"] = get_weight_samples
 
@@ -218,7 +225,7 @@ def nonlin_setup(
         input: Input data for prediction.
         dist_state: Distribution state containing weight sampling functions.
         **kwargs: Additional arguments, including:
-            - `lmap_pred_ptw`: Controls batch size for computing predictions.
+            - `nonlin_setup_batch_size`: Controls batch size for computing predictions.
 
     Returns:
         tuple: Updated `results` and `aux`.
@@ -228,17 +235,19 @@ def nonlin_setup(
         weight_sample = dist_state["get_weight_samples"](idx)
         return aux["model_fn"](input=input, params=weight_sample)
 
-    aux["pred_ensemble"] = lmap(
+    aux["pred_ensemble"] = jax.lax.map(
         compute_pred_ptw,
         jnp.arange(dist_state["num_samples"]),
-        batch_size=kwargs.get("lmap_pred_ptw", "weight"),
+        batch_size=kwargs.get(
+            "nonlin_setup_batch_size", kwargs.get("weight_batch_size")
+        ),
     )
 
     return results, aux
 
 
 def nonlin_pred_mean(
-    results: dict[str, Array], aux: dict[str, Any], name: str, **kwargs
+    results: dict[str, Array], aux: dict[str, Any], **kwargs
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Compute the mean of ensemble predictions.
 
@@ -248,7 +257,6 @@ def nonlin_pred_mean(
     Args:
         results: Dictionary to store computed results.
         aux: Auxiliary data containing the prediction ensemble.
-        name: Name under which to store the computed mean.
         **kwargs: Additional arguments (ignored).
 
     Returns:
@@ -257,12 +265,12 @@ def nonlin_pred_mean(
     del kwargs
 
     pred_ensemble = aux["pred_ensemble"]
-    results[name] = util.tree.mean(pred_ensemble, axis=0)
+    results["pred_mean"] = util.tree.mean(pred_ensemble, axis=0)
     return results, aux
 
 
 def nonlin_pred_cov(
-    results: dict[str, Array], aux: dict[str, Any], name: str, **kwargs
+    results: dict[str, Array], aux: dict[str, Any], **kwargs
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Compute the covariance of ensemble predictions.
 
@@ -271,7 +279,6 @@ def nonlin_pred_cov(
     Args:
         results: Dictionary to store computed results.
         aux: Auxiliary data containing the prediction ensemble.
-        name: Name under which to store the computed covariance.
         **kwargs: Additional arguments (ignored).
 
     Returns:
@@ -281,14 +288,14 @@ def nonlin_pred_cov(
 
     pred_ensemble = aux["pred_ensemble"]
 
-    results[name] = util.tree.cov(
+    results["pred_cov"] = util.tree.cov(
         pred_ensemble.reshape(pred_ensemble.shape[0], -1), rowvar=False
     )
     return results, aux
 
 
 def nonlin_pred_var(
-    results: dict[str, Array], aux: dict[str, Any], name: str, **kwargs
+    results: dict[str, Array], aux: dict[str, Any], **kwargs
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Compute the variance of ensemble predictions.
 
@@ -298,7 +305,6 @@ def nonlin_pred_var(
     Args:
         results: Dictionary to store computed results.
         aux: Auxiliary data containing the prediction ensemble.
-        name: Name under which to store the computed variance.
         **kwargs: Additional arguments (ignored).
 
     Returns:
@@ -310,15 +316,15 @@ def nonlin_pred_var(
         pred_cov = results["pred_cov"]
         if pred_cov.ndim > 0:
             pred_cov = jnp.diagonal(pred_cov)
-        results[name] = pred_cov
+        results["pred_var"] = pred_cov
     else:
-        pred_ensemble = aux.get("pred_ensemble")
-        results[name] = util.tree.var(pred_ensemble, axis=0)
+        pred_ensemble = aux["pred_ensemble"]
+        results["pred_var"] = util.tree.var(pred_ensemble, axis=0)
     return results, aux
 
 
 def nonlin_pred_std(
-    results: dict[str, Array], aux: dict[str, Any], name: str, **kwargs
+    results: dict[str, Array], aux: dict[str, Any], **kwargs
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Compute the standard deviation of ensemble predictions.
 
@@ -328,7 +334,6 @@ def nonlin_pred_std(
     Args:
         results: Dictionary to store computed results.
         aux: Auxiliary data containing the prediction ensemble.
-        name: Name under which to store the computed variance.
         **kwargs: Additional arguments (ignored).
 
     Returns:
@@ -337,17 +342,16 @@ def nonlin_pred_std(
     del kwargs
 
     if "pred_var" in results:
-        results[name] = jnp.sqrt(results["pred_var"])
+        results["pred_std"] = jnp.sqrt(results["pred_var"])
     else:
-        pred_ensemble = aux.get("pred_ensemble")
-        results[name] = util.tree.std(pred_ensemble, axis=0)
+        pred_ensemble = aux["pred_ensemble"]
+        results["pred_std"] = util.tree.std(pred_ensemble, axis=0)
     return results, aux
 
 
 def nonlin_samples(
     results: dict[str, Array],
     aux: dict[str, Any],
-    name: str,
     num_samples: int = 5,
     **kwargs,
 ) -> tuple[dict[str, Array], dict[str, Any]]:
@@ -358,7 +362,6 @@ def nonlin_samples(
     Args:
         results: Dictionary to store computed results.
         aux: Auxiliary data containing the prediction ensemble.
-        name: Name under which to store the selected samples.
         num_samples: Number of samples to select.
         **kwargs: Additional arguments (ignored).
 
@@ -367,15 +370,14 @@ def nonlin_samples(
     """
     del kwargs
 
-    pred_ensemble = aux.get("pred_ensemble")
-    results[name] = util.tree.tree_slice(pred_ensemble, 0, num_samples)
+    pred_ensemble = aux["pred_ensemble"]
+    results["samples"] = util.tree.tree_slice(pred_ensemble, 0, num_samples)
     return results, aux
 
 
 def nonlin_special_pred_act(
     results: dict[str, Array],
     aux: dict[str, Any],
-    name: str,
     **kwargs,
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Apply special predictive methods to nonlinear Laplace for classification.
@@ -388,7 +390,6 @@ def nonlin_special_pred_act(
     Args:
         results: Dictionary to store computed results.
         aux: Auxiliary data containing prediction information.
-        name: Name under which to store the computed predictions.
         **kwargs: Additional arguments, including:
             - `special_pred_type`: Type of special prediction ("laplace_bridge",
               "mean_field_0", "mean_field_1", or "mean_field_2")
@@ -397,11 +398,11 @@ def nonlin_special_pred_act(
     Returns:
         tuple: Updated `results` and `aux`.
     """
-    return special_pred(results, aux, name, linearized=False, **kwargs)
+    return special_pred_act(results, aux, linearized=False, **kwargs)
 
 
 def nonlin_mc_pred_act(
-    results: dict[str, Array], aux: dict[str, Any], name: str, **kwargs
+    results: dict[str, Array], aux: dict[str, Any], **kwargs
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Compute Monte Carlo predictions for nonlinear Laplace classification.
 
@@ -412,30 +413,29 @@ def nonlin_mc_pred_act(
     Args:
         results: Dictionary to store computed results.
         aux: Auxiliary data containing prediction information.
-        name: Name under which to store the computed predictions.
         **kwargs: Additional arguments passed to sample generation.
 
     Returns:
         tuple: Updated `results` and `aux`.
     """
     if "samples" not in results:
-        results, aux = nonlin_samples(
-            results=results, aux=aux, name="samples", **kwargs
-        )
+        results, aux = nonlin_samples(results=results, aux=aux, **kwargs)
 
-    results[name] = jnp.mean(jax.nn.softmax(results["samples"], axis=1), axis=0)
+    results["mc_pred_act"] = jnp.mean(
+        jax.nn.softmax(results["samples"], axis=1), axis=0
+    )
 
     return results, aux
 
 
-DEFAULT_NONLIN_FUNCTIONS = {
-    "pred_ensemble": nonlin_setup,
-    "pred_mean": nonlin_pred_mean,
-    "pred_cov": nonlin_pred_cov,
-    "pred_var": nonlin_pred_var,
-    "pred_std": nonlin_pred_std,
-    "samples": nonlin_samples,
-}
+DEFAULT_NONLIN_FINALIZE_FNS = [
+    nonlin_setup,
+    nonlin_pred_mean,
+    nonlin_pred_cov,
+    nonlin_pred_var,
+    nonlin_pred_std,
+    nonlin_samples,
+]
 
 # -------------------------------------------------------------------------
 # Utilities - Linearized pushforward
@@ -532,18 +532,16 @@ def lin_setup(
 def lin_pred_mean(
     results: dict[str, Array],
     aux: dict[str, Any],
-    name: str,
     **kwargs,
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Restore the linearized predictions.
 
     This function extracts the prediction from the results dictionary and
-    stores it under the specified name.
+    stores it.
 
     Args:
         results: Dictionary to store computed results.
         aux: Auxiliary data (ignored).
-        name: Name under which to store the computed mean.
         **kwargs: Additional arguments (ignored).
 
     Returns:
@@ -554,14 +552,13 @@ def lin_pred_mean(
     """
     del kwargs
 
-    results[name] = results["map"]
+    results["pred_mean"] = results["map"]
     return results, aux
 
 
 def lin_pred_var(
     results: dict[str, Array],
     aux: dict[str, Any],
-    name: str,
     **kwargs,
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Compute and store the variance of the linearized predictions.
@@ -572,7 +569,6 @@ def lin_pred_var(
     Args:
         results: Dictionary containing computed results.
         aux: Auxiliary data, including covariance matrix functions.
-        name: Name under which to store the predicted variance.
         **kwargs: Additional arguments (ignored).
 
     Returns:
@@ -581,19 +577,18 @@ def lin_pred_var(
     cov = results.get("pred_cov", aux["cov_mv"])
 
     if "pred_mean" not in results:
-        results, aux = lin_pred_mean(results, aux, "pred_mean", **kwargs)
+        results, aux = lin_pred_mean(results, aux, **kwargs)
 
     pred_mean = results["pred_mean"]
 
     # Compute diagonal as variance
-    results[name] = util.mv.diagonal(cov, layout=math.prod(pred_mean.shape))
+    results["pred_var"] = util.mv.diagonal(cov, layout=math.prod(pred_mean.shape))
     return results, aux
 
 
 def lin_pred_std(
     results: dict[str, Array],
     aux: dict[str, Any],
-    name: str,
     **kwargs,
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Compute and store the standard deviation of the linearized predictions.
@@ -604,24 +599,22 @@ def lin_pred_std(
     Args:
         results: Dictionary containing computed results.
         aux: Auxiliary data (ignored).
-        name: Name under which to store the predicted standard deviation.
         **kwargs: Additional arguments.
 
     Returns:
         tuple: Updated `results` and `aux`.
     """
     if "pred_var" not in results:  # Fall back to `lin_pred_var`
-        results, aux = lin_pred_var(results, aux, "pred_var", **kwargs)
+        results, aux = lin_pred_var(results, aux, **kwargs)
 
     var = results["pred_var"]
-    results[name] = util.tree.sqrt(var)
+    results["pred_std"] = util.tree.sqrt(var)
     return results, aux
 
 
 def lin_pred_cov(
     results: dict[str, Array],
     aux: dict[str, Any],
-    name: str,
     **kwargs,
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Compute and store the covariance of the linearized predictions.
@@ -632,7 +625,6 @@ def lin_pred_cov(
     Args:
         results: Dictionary containing computed results.
         aux: Auxiliary data containing covariance matrix-vector product functions.
-        name: Name under which to store the predicted covariance.
         **kwargs: Additional arguments (ignored).
 
     Returns:
@@ -642,12 +634,12 @@ def lin_pred_cov(
         TypeError: If the covariance matrix-vector product function is invalid.
     """
     if "pred_mean" not in results:
-        results, aux = lin_pred_mean(results, aux, "pred_mean", **kwargs)
+        results, aux = lin_pred_mean(results, aux, **kwargs)
 
     pred_mean = results["pred_mean"]
     cov_mv = aux["cov_mv"]
 
-    results[name] = util.mv.todense(cov_mv, layout=pred_mean)
+    results["pred_cov"] = util.mv.to_dense(cov_mv, layout=pred_mean)
     return results, aux
 
 
@@ -655,7 +647,6 @@ def lin_samples(
     results: dict[str, Array],
     aux: dict[str, Any],
     dist_state: DistState,
-    name: str,
     **kwargs,
 ):
     """Generate and store samples from the linearized distribution.
@@ -667,9 +658,8 @@ def lin_samples(
         results: Dictionary to store computed results.
         aux: Auxiliary data containing the scale matrix function.
         dist_state: Distribution state containing sampling functions and sample count.
-        name: Name under which to store the generated samples.
         **kwargs: Additional arguments, including:
-            - `lmap_lin_samples`: Batch size for computing samples.
+            - `lin_samples_batch_size`: Batch size for computing samples.
 
     Returns:
         tuple: Updated `results` and `aux`.
@@ -678,7 +668,7 @@ def lin_samples(
         TypeError: If the scale matrix or sampling functions are invalid.
     """
     if "pred_mean" not in results:
-        results, aux = lin_pred_mean(results, aux, "pred_mean", **kwargs)
+        results, aux = lin_pred_mean(results, aux, **kwargs)
 
     # Unpack arguments
     jac_mv = aux["jac_mv"]
@@ -686,10 +676,12 @@ def lin_samples(
     num_samples = dist_state["num_samples"]
 
     # Compute samples
-    results[name] = lmap(
+    results["samples"] = jax.lax.map(
         lambda i: add(results["pred_mean"], jac_mv(get_weight_samples(i))),
         jnp.arange(num_samples),
-        batch_size=kwargs.get("lmap_lin_samples", "weight"),
+        batch_size=kwargs.get(
+            "lin_samples_batch_size", kwargs.get("weight_batch_size")
+        ),
     )
     return results, aux
 
@@ -697,7 +689,6 @@ def lin_samples(
 def lin_special_pred_act(
     results: dict[str, Array],
     aux: dict[str, Any],
-    name: str,
     **kwargs,
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Apply special predictive methods to linearized Laplace for classification.
@@ -710,7 +701,6 @@ def lin_special_pred_act(
     Args:
         results: Dictionary to store computed results.
         aux: Auxiliary data containing prediction information.
-        name: Name under which to store the computed predictions.
         **kwargs: Additional arguments, including:
             - `special_pred_type`: Type of special prediction ("laplace_bridge",
               "mean_field_0", "mean_field_1", or "mean_field_2")
@@ -719,11 +709,11 @@ def lin_special_pred_act(
     Returns:
         tuple: Updated `results` and `aux`.
     """
-    return special_pred(results, aux, name, linearized=True, **kwargs)
+    return special_pred_act(results, aux, linearized=True, **kwargs)
 
 
 def lin_mc_pred_act(
-    results: dict[str, Array], aux: dict[str, Any], name: str, **kwargs
+    results: dict[str, Array], aux: dict[str, Any], **kwargs
 ) -> tuple[dict[str, Array], dict[str, Any]]:
     """Compute Monte Carlo predictions for linear Laplace classification.
 
@@ -734,28 +724,29 @@ def lin_mc_pred_act(
     Args:
         results: Dictionary to store computed results.
         aux: Auxiliary data containing prediction information.
-        name: Name under which to store the computed predictions.
         **kwargs: Additional arguments passed to sample generation.
 
     Returns:
         tuple: Updated `results` and `aux`.
     """
     if "samples" not in results:
-        results, aux = lin_samples(results=results, aux=aux, name="samples", **kwargs)
+        results, aux = lin_samples(results=results, aux=aux, **kwargs)
 
-    results[name] = jnp.mean(jax.nn.softmax(results["samples"], axis=1), axis=0)
+    results["mc_pred_act"] = jnp.mean(
+        jax.nn.softmax(results["samples"], axis=1), axis=0
+    )
 
     return results, aux
 
 
-DEFAULT_LIN_FINALIZE = {
-    "setup": lin_setup,
-    "pred_mean": lin_pred_mean,
-    "pred_cov": lin_pred_cov,
-    "pred_var": lin_pred_var,
-    "pred_std": lin_pred_std,
-    "samples": lin_samples,
-}
+DEFAULT_LIN_FINALIZE_FNS = [
+    lin_setup,
+    lin_pred_mean,
+    lin_pred_cov,
+    lin_pred_var,
+    lin_pred_std,
+    lin_samples,
+]
 
 
 # -------------------------------------------------------------------------
@@ -767,7 +758,7 @@ def set_prob_predictive(
     model_fn: ModelFn,
     mean_params: Params,
     dist_state: DistState,
-    pushforward_fns: dict,
+    pushforward_fns: list[Callable],
     **kwargs,
 ) -> Callable[[InputArray], dict[str, Array]]:
     """Create a probabilistic predictive function.
@@ -782,8 +773,8 @@ def set_prob_predictive(
         mean_params: The mean of the posterior distribution over model parameters.
         dist_state: The distribution state for uncertainty propagation, containing
             functions and parameters related to the posterior.
-        pushforward_fns: A dictionary of pushforward functions for uncertainty
-            metrics, such as mean, variance, and covariance.
+        pushforward_fns: A list of pushforward functions, such as mean, variance, and
+            covariance.
         **kwargs: Additional arguments passed to the pushforward functions.
 
     Returns:
@@ -794,13 +785,12 @@ def set_prob_predictive(
     def prob_predictive(input: InputArray) -> dict[str, Array]:
         # MAP prediction
         pred_map = model_fn(input=input, params=mean_params)
-        # jax.debug.print("haha" + str(pred_map[0]))
         aux = {"model_fn": model_fn, "mean_params": mean_params}
         results = {"map": pred_map}
 
         # Compute prediction
-        return finalize_functions(
-            functions=pushforward_fns,
+        return finalize_fns(
+            fns=pushforward_fns,
             results=results,
             dist_state=dist_state,
             aux=aux,
@@ -819,7 +809,7 @@ def set_nonlin_pushforward(
     *,
     key: KeyType,
     loss_scaling_factor: Float = 1.0,
-    pushforward_fns: dict = DEFAULT_NONLIN_FUNCTIONS,
+    pushforward_fns: list = DEFAULT_NONLIN_FINALIZE_FNS,
     num_samples: int = 100,
     **kwargs,
 ):
@@ -838,7 +828,7 @@ def set_nonlin_pushforward(
         key: PRNG key for generating random samples.
         loss_scaling_factor: Factor by which the user-provided loss function is scaled.
             Defaults to 1.0.
-        pushforward_fns: A dictionary of Monte Carlo pushforward functions
+        pushforward_fns: A list of Monte Carlo pushforward functions
             (default: `DEFAULT_MC_FUNCTIONS`).
         num_samples: Number of weight samples for Monte Carlo predictions.
         **kwargs: Additional arguments passed to the pushforward functions.
@@ -858,6 +848,7 @@ def set_nonlin_pushforward(
         linearized=False,
         num_samples=num_samples,
         key=key,
+        **kwargs,
     )
 
     # Set prob predictive
@@ -878,7 +869,7 @@ def set_lin_pushforward(
     posterior_fn: Callable[[PriorArguments, Int], Posterior],
     prior_arguments: PriorArguments,
     loss_scaling_factor: Float = 1.0,
-    pushforward_fns: dict = DEFAULT_LIN_FINALIZE,
+    pushforward_fns: list = DEFAULT_LIN_FINALIZE_FNS,
     **kwargs,
 ) -> Callable:
     """Construct a linearized pushforward predictive function.
@@ -895,7 +886,7 @@ def set_lin_pushforward(
         prior_arguments: Arguments for defining the prior distribution.
         loss_scaling_factor: Factor by which the user-provided loss function is scaled.
             Defaults to 1.0.
-        pushforward_fns: A dictionary of linearized pushforward functions
+        pushforward_fns: A list of linearized pushforward functions
             (default: `DEFAULT_LIN_FINALIZE`).
         **kwargs: Additional arguments passed to the pushforward functions, including:
             - `n_samples`: Number of samples for approximating uncertainty metrics.
@@ -914,8 +905,7 @@ def set_lin_pushforward(
         model_fn,
         posterior_state,
         linearized=True,
-        num_samples=kwargs.get("num_samples", 0),
-        key=kwargs.get("key"),
+        **kwargs,
     )
 
     # Set prob predictive
@@ -975,6 +965,7 @@ def set_posterior_gp_kernel(
         posterior_state,
         linearized=True,
         num_samples=0,
+        **kwargs,
     )
 
     # Kernel mv
@@ -989,7 +980,7 @@ def set_posterior_gp_kernel(
     if kwargs.get("dense"):
         output_layout = kwargs.get("output_layout")
         if output_layout:
-            return lambda x1, x2: util.mv.todense(
+            return lambda x1, x2: util.mv.to_dense(
                 lambda v: kernel_mv(v, x1, x2, dist_state), layout=output_layout
             ), dist_state
         msg = "function should return a dense matrix, but no output layout is specified"

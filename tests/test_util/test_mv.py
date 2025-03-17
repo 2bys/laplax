@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from laplax.util.flatten import create_pytree_flattener, wrap_function
-from laplax.util.mv import diagonal, todense
+from laplax.util.mv import diagonal, to_dense
 from laplax.util.tree import get_size
 
 
@@ -20,7 +20,7 @@ def test_diagonal_dense(n):
 
 
 @pytest.mark.parametrize("n", [2, 5])
-def test_diagonal_and_todense_flat_mvp(n):
+def test_diagonal_and_to_dense_flat_mvp(n):
     key = jax.random.PRNGKey(42)
     A = jax.random.normal(key, (n, n))
 
@@ -32,13 +32,13 @@ def test_diagonal_and_todense_flat_mvp(n):
     diag_expected = jnp.diag(A)
     np.testing.assert_allclose(diag_computed, diag_expected, atol=1e-7, rtol=1e-7)
 
-    # 2) Compare todense(mv, layout=n) to A
-    dense_computed = todense(mv, layout=n)
+    # 2) Compare to_dense(mv, layout=n) to A
+    dense_computed = to_dense(mv, layout=n)
     np.testing.assert_allclose(dense_computed, A, atol=1e-7, rtol=1e-7)
 
 
 @pytest.mark.parametrize(("n1", "n2"), [(2, 3), (3, 4)])
-def test_diagonal_and_todense_pytree_mvp(n1, n2):
+def test_diagonal_and_to_dense_pytree_mvp(n1, n2):
     key = jax.random.PRNGKey(999)
     layout = {
         "x": jnp.zeros(n1),
@@ -75,13 +75,13 @@ def test_diagonal_and_todense_pytree_mvp(n1, n2):
     diag_expected = jnp.diag(A)
     np.testing.assert_allclose(diag_computed, diag_expected, atol=1e-7, rtol=1e-7)
 
-    # 2) Compare todense(mv, layout=layout) to A
-    dense_computed = todense(mv, layout)
+    # 2) Compare to_dense(mv, layout=layout) to A
+    dense_computed = to_dense(mv, layout)
 
     flatten, unflatten = create_pytree_flattener(layout)
     np.testing.assert_allclose(flatten(dense_computed).reshape(*A.shape), A)
 
     mv_wrapped = wrap_function(mv, input_fn=unflatten, output_fn=flatten)
-    dense_computed = todense(mv_wrapped, get_size(layout))
+    dense_computed = to_dense(mv_wrapped, get_size(layout))
     flatten, unflatten = create_pytree_flattener(layout)
     np.testing.assert_allclose(flatten(dense_computed).reshape(*A.shape), A)

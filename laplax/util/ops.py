@@ -1,20 +1,18 @@
 """Contains operations for flexible/adaptive compute."""
 
 import operator
-import os
 
 import jax
-import jax.numpy as jnp
 
-from laplax.types import Any, Callable, DType, Iterable
+from laplax.types import Callable, Iterable
 
 # -------------------------------------------------------------------------
 # Default values
 # -------------------------------------------------------------------------
 
-DEFAULT_PARALLELISM = 32
+DEFAULT_PARALLELISM = None
 DEFAULT_DTYPE = "float32"
-DEFAULT_PRECOMPUTE_LIST = "True"
+DEFAULT_PRECOMPUTE_LIST = True
 
 # -------------------------------------------------------------------------
 # Utilities
@@ -40,105 +38,13 @@ def str_to_bool(value: str) -> bool:
     return valid_values[value]
 
 
-def get_env_value(key: str, default: int | str | None = None) -> str | None:
-    """Fetch the value of an environment variable or return a default value.
-
-    Args:
-        key: The name of the environment variable.
-        default: The default value to return if the variable is not set.
-
-    Returns:
-        str: The value of the environment variable or the default.
-    """
-    if default is not None:
-        default = str(default)
-    return os.getenv(key, default)
-
-
-def get_env_int(key: str, default: int | None = None) -> int | None:
-    """Fetch the value of an environment variable as an integer.
-
-    Args:
-        key: The name of the environment variable.
-        default: The default integer value to return if the variable is not set.
-
-    Returns:
-        int: The value of the environment variable as an integer.
-    """
-    val = get_env_value(key, default)
-    if val is not None:
-        val = int(val)
-    return val
-
-
-def get_env_bool(key: str, default: str | None = None) -> bool | None:
-    """Fetch the value of an environment variable as a boolean.
-
-    Args:
-        key: The name of the environment variable.
-        default: The default string value ("True" or "False") if the variable is not
-            set.
-
-    Returns:
-        bool: The value of the environment variable as a boolean.
-
-    Raises:
-        ValueError: If the default string is not a valid boolean representation.
-    """
-    val = get_env_value(key, default)
-    if val is not None:
-        val = str_to_bool(val)
-    return val
-
-
 # -------------------------------------------------------------------------
 # Adaptive operations
 # -------------------------------------------------------------------------
 
 
-def lmap(func: Callable, data: Iterable, batch_size: int | str | None = None) -> Any:
-    """Apply a function over an iterable with support for batching.
-
-    This function maps `func` over `data`, splitting the data into batches
-    determined by the `batch_size`.
-
-    Args:
-        func: The function to apply to each element or batch of the data.
-        data: The input iterable over which to map the function.
-        batch_size: The batch size for processing. Options:
-            - None: Use the default batch size specified by the environment.
-            - str: Determine the batch size from an environment variable.
-            - int: Specify the batch size directly.
-
-    Returns:
-        Any: The result of mapping `func` over `data`.
-    """
-    if isinstance(batch_size, str):
-        batch_size = get_env_int(f"LAPLAX_PARALLELISM_{batch_size.upper()}", None)
-    elif batch_size is None:
-        batch_size = get_env_int("LAPLAX_PARALLELISM", DEFAULT_PARALLELISM)
-        if batch_size is None:
-            msg = "LAPLAX_PARALLELISM environment variable not set properly."
-            raise ValueError(msg)
-
-    return jax.lax.map(func, data, batch_size=batch_size)
-
-
-def laplax_dtype() -> DType:
-    """Get the data type (dtype) used by the library.
-
-    This function retrieves the dtype specified by the "LAPLAX_DTYPE" environment
-    variable or returns the default dtype.
-
-    Returns:
-        DType: The JAX-compatible dtype to use.
-    """
-    dtype = get_env_value("LAPLAX_DTYPE", DEFAULT_DTYPE)
-    return jnp.dtype(dtype)
-
-
 def precompute_list(
-    func: Callable, items: Iterable, option: str | bool | None = None, **kwargs
+    func: Callable, items: Iterable, precompute: bool | None = None, **kwargs
 ) -> Callable:
     """Precompute results for a list of items or return the original function.
 
@@ -148,28 +54,22 @@ def precompute_list(
     Args:
         func: The function to apply to each item in the list.
         items: An iterable of items to process.
-        option: Determines whether to precompute results:
+        precompute: Determines whether to precompute results:
             - None: Use the default precompute setting.
-            - str: Retrieve the setting from an environment variable.
             - bool: Specify directly whether to precompute.
         **kwargs: Additional keyword arguments, including:
-            - lmap_precompute: Batch size for precomputing results.
+            - precompute_list_batch_size: Batch size for precomputing results.
 
     Returns:
         Callable: A function to retrieve precomputed elements by index, or the original
         `func` if precomputation is disabled.
     """
-    if isinstance(option, str):
-        option = get_env_bool(f"LAPLAX_PRECOMPUTE_LIST_{option}", None)
-    elif option is None:
-        option = get_env_bool("LAPLAX_PRECOMPUTE_LIST", DEFAULT_PRECOMPUTE_LIST)
-        if option is None:
-            msg = "LAPLAX_PRECOMPUTE_LIST environment variable not set properly."
-            raise ValueError(msg)
+    if precompute is None:
+        precompute = DEFAULT_PRECOMPUTE_LIST
 
-    if option:
-        precomputed = lmap(
-            func, items, batch_size=kwargs.get("lmap_precompute", "precompute")
+    if precompute:
+        precomputed = jax.lax.map(
+            func, items, batch_size=kwargs.get("precompute_list_batch_size")
         )
 
         def get_element(index: int):

@@ -43,6 +43,8 @@ dev = [
     "flax",
     "equinox",
     "matplotlib",
+    "curvlinops-for-pytorch",
+    "laplace-torch",
 ]
 notebooks = [
     "torch",

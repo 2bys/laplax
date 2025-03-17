@@ -21,7 +21,7 @@ from laplax.eval.pushforward import (
     set_nonlin_pushforward,
 )
 from laplax.util.flatten import create_pytree_flattener, wrap_function
-from laplax.util.mv import todense
+from laplax.util.mv import to_dense
 
 
 def get_sinusoid_example(n_data=150, sigma_noise=0.3, batch_size=150):
@@ -259,11 +259,11 @@ class LaplaceComparison:
             key=jax.random.key(0),
             posterior_fn=self.get_posterior,
             prior_arguments={"prior_prec": 1},
-            pushforward_fns={
-                "setup": nonlin_setup,
-                "pred_mean": nonlin_pred_mean,
-                "pred_var": nonlin_pred_var,
-            },
+            pushforward_fns=[
+                nonlin_setup,
+                nonlin_pred_mean,
+                nonlin_pred_var,
+            ],
             num_samples=self.num_samples,
         )
 
@@ -281,11 +281,11 @@ class LaplaceComparison:
             key=jax.random.key(0),
             posterior_fn=self.get_posterior,
             prior_arguments={"prior_prec": 1},
-            pushforward_fns={
-                "setup": lin_setup,
-                "pred_mean": lin_pred_mean,
-                "pred_var": lin_pred_var,
-            },
+            pushforward_fns=[
+                lin_setup,
+                lin_pred_mean,
+                lin_pred_var,
+            ],
         )
 
         results = jax.vmap(pushforward)(self.X_test_jax)
@@ -333,14 +333,6 @@ def test_compare_implementations_against_laplace_redux(
     mean_diff_lin = np.abs(torch_mu_lin - laplax_mu_lin).mean()
     std_diff_lin = np.abs(torch_std_lin - laplax_std_lin).mean()
 
-    # print("===== Non-linear Laplace Comparison =====")
-    # print("Mean predictions difference:", mean_diff_nonlin)
-    # print("Std predictions difference:", std_diff_nonlin)
-
-    # print("===== Linear Laplace Comparison =====")
-    # print("Mean predictions difference:", mean_diff_lin)
-    # print("Std predictions difference:", std_diff_lin)
-
     np.testing.assert_allclose(mean_diff_nonlin, 0, atol=1)
     np.testing.assert_allclose(std_diff_nonlin, 0, atol=1)
     np.testing.assert_allclose(mean_diff_lin, 0, atol=1e-4)
@@ -371,7 +363,7 @@ def test_ggn_against_curvlinops(trained_laplace_comparison):
         num_total_samples=1,
     )
     flatten, unflatten = create_pytree_flattener(la_case.params)
-    jax_ggn = todense(
+    jax_ggn = to_dense(
         wrap_function(ggn_mv, unflatten, flatten), layout=flatten(la_case.params)
     )
 

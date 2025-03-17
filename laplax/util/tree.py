@@ -10,7 +10,6 @@ import jax.numpy as jnp
 
 from laplax.types import Any, Array, Callable, Float, KeyType, PyTree
 from laplax.util.flatten import unravel_array_into_pytree
-from laplax.util.ops import lmap
 
 # ---------------------------------------------------------------
 # Tree utilities
@@ -336,7 +335,9 @@ def eye_like_with_basis_vector(tree: PyTree) -> PyTree:
         A PyTree of basis vectors.
     """
     num_elems = get_size(tree)
-    return lmap(partial(basis_vector_from_index, tree=tree), jnp.arange(num_elems))
+    return jax.lax.map(
+        partial(basis_vector_from_index, tree=tree), jnp.arange(num_elems)
+    )
 
 
 def eye_like(tree: PyTree) -> PyTree:

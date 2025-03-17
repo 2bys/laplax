@@ -9,7 +9,7 @@ from laplax.curv.ggn import create_ggn_mv
 from laplax.curv.hessian import create_hessian_mv
 from laplax.enums import LossFn
 from laplax.util.flatten import create_pytree_flattener, wrap_function
-from laplax.util.mv import todense
+from laplax.util.mv import to_dense
 from laplax.util.tree import get_size
 
 
@@ -38,7 +38,7 @@ def test_ggn_linear_regression():
         num_total_samples=N,
     )
 
-    G_calc = todense(ggn_mv, layout=params).swapaxes(0, 1).reshape(-1, D_out * D_in)
+    G_calc = to_dense(ggn_mv, layout=params).swapaxes(0, 1).reshape(-1, D_out * D_in)
 
     # Compare results
     np.testing.assert_allclose(G_manual, G_calc, atol=5 * 1e-6)
@@ -74,7 +74,7 @@ def test_ggn_linear_regression_2():
     flatten, unflatten = create_pytree_flattener(state)
     ggn_mv = wrap_function(ggn_mv, input_fn=unflatten, output_fn=flatten)
     num_params = get_size(state)
-    G = todense(ggn_mv, layout=num_params)
+    G = to_dense(ggn_mv, layout=num_params)
 
     # Compare results
     G_manual = (
@@ -113,7 +113,7 @@ def test_hessian_linear_regression():
     )
 
     hessian_calc = (
-        todense(hessian_mv, layout=params).swapaxes(0, 1).reshape(-1, D_out * D_in)
+        to_dense(hessian_mv, layout=params).swapaxes(0, 1).reshape(-1, D_out * D_in)
     )
 
     # Compare results
@@ -151,7 +151,7 @@ def test_hessian_linear_regression_2():
     flatten, unflatten = create_pytree_flattener(state)
     hessian_mv = wrap_function(hessian_mv, input_fn=unflatten, output_fn=flatten)
     num_params = get_size(state)
-    H = todense(hessian_mv, layout=num_params)
+    H = to_dense(hessian_mv, layout=num_params)
 
     # Compare results
     hessian_manual = (

@@ -27,7 +27,7 @@ from laplax.util.flatten import (
     wrap_factory,
     wrap_function,
 )
-from laplax.util.mv import diagonal, todense
+from laplax.util.mv import diagonal, to_dense
 from laplax.util.tree import get_size
 
 # -----------------------------------------------------------------------
@@ -63,7 +63,7 @@ def create_full_curvature(
     else:
         flatten, unflatten = create_pytree_flattener(layout)
         mv_wrapped = wrap_function(mv, input_fn=unflatten, output_fn=flatten)
-    curv_est = todense(mv_wrapped, layout=get_size(layout))
+    curv_est = to_dense(mv_wrapped, layout=get_size(layout))
     return curv_est
 
 
