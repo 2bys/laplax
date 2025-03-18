@@ -522,6 +522,78 @@ CURVATURE_STATE_TO_COV: dict[CurvatureKeyType, Callable] = {
 }
 
 
+def approximate_curvature(
+    curvature_type: CurvApprox | str,
+    mv: CurvatureMV,
+    layout: Layout | None = None,
+    **kwargs,
+):
+    # Retrieve the curvature estimator based on the provided type
+    curv_estimate = CURVATURE_METHODS[curvature_type](mv, layout=layout, **kwargs)
+
+    # Ignore lazy evaluation
+    curv_estimate = jax.tree.map(
+        lambda x: x.block_until_ready() if isinstance(x, jax.Array) else x,
+        curv_estimate,
+    )
+
+    return curv_estimate
+
+
+def set_posterior_fn(
+    curv_type: CurvatureKeyType, curv_est: PyTree, *, layout: Layout, **kwargs
+) -> Callable:
+    if layout is not None and not isinstance(layout, int | PyTree):
+        msg = "Layout must be an integer, PyTree or None."
+        raise ValueError(msg)
+
+    # Create functions for flattening and unflattening if required
+    if layout is None or isinstance(layout, int):
+        flatten = unflatten = None
+    else:
+        # Use custom flatten/unflatten functions for complex pytrees
+        flatten, unflatten = create_pytree_flattener(layout)
+
+    def posterior_fn(
+        prior_arguments: PriorArguments,
+        loss_scaling_factor: Float = 1.0,
+    ) -> PosteriorState:
+        """Posterior function to compute covariance and scale-related functions.
+
+        Parameters:
+            prior_arguments: Prior arguments for the posterior.
+            loss_scaling_factor: Factor by which the user-provided loss function is
+                scaled. Defaults to 1.0.
+
+        Returns:
+            PosteriorState: Dictionary containing:
+                - 'state': Updated state of the posterior.
+                - 'cov_mv': Function to compute covariance matrix-vector product.
+                - 'scale_mv': Function to compute scale matrix-vector product.
+        """
+        # Calculate posterior precision.
+        precision = CURVATURE_PRIOR_METHODS[curv_type](
+            curv_est=curv_est,
+            prior_arguments=prior_arguments,
+            loss_scaling_factor=loss_scaling_factor,
+        )
+
+        # Calculate posterior state
+        state = CURVATURE_TO_POSTERIOR_STATE[curv_type](precision)
+
+        # Extract matrix-vector product
+        scale_mv_from_state = CURVATURE_STATE_TO_SCALE[curv_type]
+        cov_mv_from_state = CURVATURE_STATE_TO_COV[curv_type]
+
+        return Posterior(
+            state=state,
+            cov_mv=wrap_factory(cov_mv_from_state, flatten, unflatten),
+            scale_mv=wrap_factory(scale_mv_from_state, flatten, unflatten),
+        )
+
+    return posterior_fn
+
+
 @dataclass
 class Posterior:
     state: PosteriorState
@@ -558,56 +630,14 @@ def create_posterior_fn(
         Callable: A posterior function that takes the prior_arguments and returns the
             posterior_state.
     """
-    if layout is not None and not isinstance(layout, int | PyTree):
-        msg = "Layout must be an integer, PyTree or None."
-        raise ValueError(msg)
-
-    # Create functions for flattening and unflattening if required
-    if layout is None or isinstance(layout, int):
-        flatten = unflatten = None
-    else:
-        # Use custom flatten/unflatten functions for complex pytrees
-        flatten, unflatten = create_pytree_flattener(layout)
 
     # Retrieve the curvature estimator based on the provided type
-    curv_estimator = CURVATURE_METHODS[curvature_type](mv, layout=layout, **kwargs)
+    curv_estimate = approximate_curvature(
+        curvature_type, mv=mv, layout=layout, **kwargs
+    )
 
-    def posterior_fn(
-        prior_arguments: PriorArguments,
-        loss_scaling_factor: Float = 1.0,
-    ) -> PosteriorState:
-        """Posterior function to compute covariance and scale-related functions.
-
-        Parameters:
-            prior_arguments: Prior arguments for the posterior.
-            loss_scaling_factor: Factor by which the user-provided loss function is
-                scaled. Defaults to 1.0.
-
-        Returns:
-            PosteriorState: Dictionary containing:
-                - 'state': Updated state of the posterior.
-                - 'cov_mv': Function to compute covariance matrix-vector product.
-                - 'scale_mv': Function to compute scale matrix-vector product.
-        """
-        # Calculate posterior precision.
-        precision = CURVATURE_PRIOR_METHODS[curvature_type](
-            curv_est=curv_estimator,
-            prior_arguments=prior_arguments,
-            loss_scaling_factor=loss_scaling_factor,
-        )
-
-        # Calculate posterior state
-        state = CURVATURE_TO_POSTERIOR_STATE[curvature_type](precision)
-
-        # Extract matrix-vector product
-        scale_mv_from_state = CURVATURE_STATE_TO_SCALE[curvature_type]
-        cov_mv_from_state = CURVATURE_STATE_TO_COV[curvature_type]
-
-        return Posterior(
-            state=state,
-            cov_mv=wrap_factory(cov_mv_from_state, flatten, unflatten),
-            scale_mv=wrap_factory(scale_mv_from_state, flatten, unflatten),
-        )
+    # Set posterior fn based on curv_estimate
+    posterior_fn = set_posterior_fn(curvature_type, curv_estimate, layout=layout)
 
     return posterior_fn
 
