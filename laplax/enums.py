@@ -5,13 +5,14 @@ from enum import StrEnum
 
 class LossFn(StrEnum):
     MSE = "mse"
-    CROSSENTROPY = "cross_entropy"
+    CROSS_ENTROPY = "cross_entropy"
+    BINARY_CROSS_ENTROPY = "binary_cross_entropy"
 
 
 class CurvApprox(StrEnum):
     FULL = "full"
     DIAGONAL = "diagonal"
-    LOW_RANK = "low_rank"
+    LANCZOS = "lanczos"
     LOBPCG = "lobpcg"
 
 

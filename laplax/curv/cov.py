@@ -12,9 +12,9 @@ from laplax.curv.lobpcg import lobpcg_lowrank
 from laplax.curv.utils import LowRankTerms
 from laplax.enums import CurvApprox, LowRankMethod
 from laplax.types import (
-    Any,
     Array,
     Callable,
+    CurvatureKeyType,
     CurvatureMV,
     FlatParams,
     Float,
@@ -65,12 +65,12 @@ def create_full_curvature(
     else:
         flatten, unflatten = create_pytree_flattener(layout)
         mv_wrapped = wrap_function(mv, input_fn=unflatten, output_fn=flatten)
-    curv_est = to_dense(mv_wrapped, layout=get_size(layout))
-    return curv_est
+    curv_estimate = to_dense(mv_wrapped, layout=get_size(layout))
+    return curv_estimate
 
 
-def full_with_prior(
-    curv_est: Num[Array, "P P"],
+def full_curvature_to_precision(
+    curv_estimate: Num[Array, "P P"],
     prior_arguments: PriorArguments,
     loss_scaling_factor: Float = 1.0,
 ) -> Num[Array, "P P"]:
@@ -80,7 +80,7 @@ def full_with_prior(
     dictionary and added to the curvature estimate.
 
     Args:
-        curv_est: Full curvature estimate matrix.
+        curv_estimate: Full curvature estimate matrix.
         prior_arguments: Dictionary containing prior precision as 'prior_prec'.
         loss_scaling_factor: Factor by which the user-provided loss function is
             scaled. Defaults to 1.0.
@@ -89,10 +89,16 @@ def full_with_prior(
         Updated curvature matrix with added prior precision.
     """
     prior_prec = prior_arguments["prior_prec"]
-    return (curv_est + prior_prec * jnp.eye(curv_est.shape[-1])) / loss_scaling_factor
+    # sigma = prior_arguments["sigma"] if "sigma" in prior_arguments else sigma
+    sigma = prior_arguments.get("sigma", 1.0)
+
+    # prior_arguments["sigma"] if "sigma" in prior_arguments else sigma
+    return (
+        sigma * curv_estimate + prior_prec * jnp.eye(curv_estimate.shape[-1])
+    ) / loss_scaling_factor
 
 
-def prec_to_scale(prec: Num[Array, "P P"]) -> Num[Array, "P P"]:
+def full_prec_to_scale(prec: Num[Array, "P P"]) -> Num[Array, "P P"]:
     """Convert precision matrix to scale matrix using Cholesky decomposition.
 
     Implementation of the corresponding torch function for converting a precision
@@ -110,9 +116,10 @@ def prec_to_scale(prec: Num[Array, "P P"]) -> Num[Array, "P P"]:
     """
     Lf = jnp.linalg.cholesky(jnp.flip(prec, axis=(-2, -1)))
 
-    if jnp.any(jnp.isnan(Lf)):
-        msg = "matrix is not positive definite"
-        raise ValueError(msg)
+    # JIT COMPILE ERROR DUE TO DEPENDENCY ON VALUE.
+    # if jnp.any(jnp.isnan(Lf)):
+    #     msg = "matrix is not positive definite"
+    #     raise ValueError(msg)
 
     L_inv = jnp.transpose(jnp.flip(Lf, axis=(-2, -1)), axes=(-2, -1))
     Id = jnp.eye(prec.shape[-1], dtype=prec.dtype)
@@ -120,7 +127,7 @@ def prec_to_scale(prec: Num[Array, "P P"]) -> Num[Array, "P P"]:
     return L
 
 
-def full_prec_to_state(
+def full_prec_to_posterior_state(
     prec: Num[Array, "P P"],
 ) -> dict[str, Num[Array, "P P"]]:
     """Convert precision matrix to scale matrix.
@@ -135,12 +142,12 @@ def full_prec_to_state(
     Returns:
         Scale matrix L where L @ L.T is the covariance matrix.
     """
-    scale = prec_to_scale(prec)
+    scale = full_prec_to_scale(prec)
 
     return {"scale": scale}
 
 
-def full_state_to_scale(
+def full_posterior_state_to_scale(
     state: dict[str, Num[Array, "P P"]],
 ) -> Callable[[FlatParams], FlatParams]:
     """Create a scale matrix-vector product function.
@@ -162,7 +169,7 @@ def full_state_to_scale(
     return scale_mv
 
 
-def full_state_to_cov(
+def full_posterior_state_to_cov(
     state: dict[str, Num[Array, "P P"]],
 ) -> Callable[[FlatParams], FlatParams]:
     """Create a covariance matrix-vector product function.
@@ -211,8 +218,8 @@ def create_diagonal_curvature(mv: CurvatureMV, layout: Layout, **kwargs) -> Flat
     return curv_diagonal
 
 
-def diag_with_prior(
-    curv_est: FlatParams,
+def diagonal_curvature_to_precision(
+    curv_estimate: FlatParams,
     prior_arguments: PriorArguments,
     loss_scaling_factor: Float = 1.0,
 ) -> FlatParams:
@@ -222,7 +229,7 @@ def diag_with_prior(
     dictionary and added to the diagonal curvature estimate.
 
     Args:
-        curv_est: Diagonal curvature estimate.
+        curv_estimate: Diagonal curvature estimate.
         prior_arguments: Dictionary containing prior precision as 'prior_prec'.
         loss_scaling_factor: Factor by which the user-provided loss function is
             scaled. Defaults to 1.0.
@@ -231,12 +238,13 @@ def diag_with_prior(
         Updated diagonal curvature with added prior precision.
     """
     prior_prec = prior_arguments["prior_prec"]
+    sigma = prior_arguments.get("sigma", 1.0)
     return (
-        curv_est + prior_prec * jnp.ones_like(curv_est.shape[-1])
+        sigma * curv_estimate + prior_prec * jnp.ones_like(curv_estimate.shape[-1])
     ) / loss_scaling_factor
 
 
-def diag_prec_to_state(prec: FlatParams) -> dict[str, FlatParams]:
+def diagonal_prec_to_posterior_state(prec: FlatParams) -> dict[str, FlatParams]:
     """Convert precision matrix to scale matrix.
 
     The provided diagonal precision matrix is converted to the corresponding scale
@@ -251,7 +259,7 @@ def diag_prec_to_state(prec: FlatParams) -> dict[str, FlatParams]:
     return {"scale": jnp.sqrt(jnp.reciprocal(prec))}
 
 
-def diag_state_to_scale(
+def diagonal_posterior_state_to_scale(
     state: dict[str, FlatParams],
 ) -> Callable[[FlatParams], FlatParams]:
     """Create a scale matrix-vector product function.
@@ -273,7 +281,7 @@ def diag_state_to_scale(
     return diag_mv
 
 
-def diag_state_to_cov(
+def diagonal_posterior_state_to_cov(
     state: dict[str, FlatParams],
 ) -> Callable[[FlatParams], FlatParams]:
     """Create a covariance matrix-vector product function.
@@ -323,14 +331,6 @@ def create_low_rank_curvature(
     Returns:
         A LowRankTerms object representing the low-rank curvature approximation.
     """
-    # flatten, unflatten = create_pytree_flattener(layout)
-    # nparams = util.tree.get_size(layout)
-    # mv = jax.vmap(
-    #     wrap_function(fn=mv, input_fn=unflatten, output_fn=flatten),
-    #     in_axes=-1,
-    #     out_axes=-1,
-    # )  # Turn mv into matmul structure.
-
     # Select and apply the low-rank method.
     low_rank_terms = {
         LowRankMethod.LANCZOS: lanczos_lowrank,
@@ -373,7 +373,7 @@ def low_rank_square(state: LowRankTerms) -> LowRankTerms:
     This returns the LowRankTerms which correspond to the squared low rank
     approximation.
 
-    $$ (U S U^{\top} + scalar I)**2
+    $$ (U S U^{\top} + scalar I) ** 2
     = scalar**2 + U ((S + scalar) ** 2 - scalar**2) U^{\top} $$
 
     Args:
@@ -391,8 +391,8 @@ def low_rank_square(state: LowRankTerms) -> LowRankTerms:
     )
 
 
-def low_rank_with_prior(
-    curv_est: LowRankTerms,
+def low_rank_curvature_to_precision(
+    curv_estimate: LowRankTerms,
     prior_arguments: PriorArguments,
     loss_scaling_factor: Float = 1.0,
 ) -> LowRankTerms:
@@ -403,7 +403,7 @@ def low_rank_with_prior(
     LowRankTerms.
 
     Args:
-        curv_est: Low-rank curvature approximation.
+        curv_estimate: Low-rank curvature approximation.
         prior_arguments: Dictionary containing prior precision
             as 'prior_prec'.
         loss_scaling_factor: Factor by which the user-provided loss function is
@@ -414,11 +414,18 @@ def low_rank_with_prior(
             precision.
     """
     prior_prec = prior_arguments["prior_prec"]
-    curv_est.scalar = prior_prec / loss_scaling_factor
-    return curv_est
+    sigma = prior_arguments.get("sigma", 1.0)
+    U, S, _ = jax.tree.leaves(curv_estimate)
+    return LowRankTerms(
+        U=U,
+        S=(sigma * S),
+        scalar=prior_prec / loss_scaling_factor,
+    )
 
 
-def low_rank_prec_to_state(curv_est: LowRankTerms) -> dict[str, LowRankTerms]:
+def low_rank_prec_to_posterior_state(
+    curv_estimate: LowRankTerms,
+) -> dict[str, LowRankTerms]:
     """Convert the low-rank precision representation to a posterior state.
 
     The scalar component and eigenvalues of the low-rank curvature estimate
@@ -426,12 +433,12 @@ def low_rank_prec_to_state(curv_est: LowRankTerms) -> dict[str, LowRankTerms]:
     representation.
 
     Args:
-        curv_est: Low-rank curvature estimate.
+        curv_estimate: Low-rank curvature estimate.
 
     Returns:
         A dictionary with the posterior state represented as `LowRankTerms`.
     """
-    U, S, scalar = jax.tree_util.tree_leaves(curv_est)
+    U, S, scalar = jax.tree_util.tree_leaves(curv_estimate)
     scalar_sqrt_inv = jnp.reciprocal(jnp.sqrt(scalar))
     return {
         "scale": LowRankTerms(
@@ -442,7 +449,7 @@ def low_rank_prec_to_state(curv_est: LowRankTerms) -> dict[str, LowRankTerms]:
     }
 
 
-def low_rank_state_to_scale(
+def low_rank_posterior_state_to_scale(
     state: dict[str, LowRankTerms],
 ) -> Callable[[FlatParams], FlatParams]:
     """Create a matrix-vector product function for the scale matrix.
@@ -460,7 +467,7 @@ def low_rank_state_to_scale(
     return create_low_rank_mv(state["scale"])
 
 
-def low_rank_state_to_cov(
+def low_rank_posterior_state_to_cov(
     state: dict[str, LowRankTerms],
 ) -> Callable[[FlatParams], FlatParams]:
     """Create a matrix-vector product function for the covariance matrix.
@@ -479,57 +486,80 @@ def low_rank_state_to_cov(
 
 
 # ---------------------------------------------------------------------------------
-# General api
+# General api for curvature types
 # ---------------------------------------------------------------------------------
-
-CurvatureKeyType = CurvApprox | str | None
 
 CURVATURE_METHODS: dict[CurvatureKeyType, Callable] = {
     CurvApprox.FULL: create_full_curvature,
     CurvApprox.DIAGONAL: create_diagonal_curvature,
-    CurvApprox.LOW_RANK: create_low_rank_curvature,
+    CurvApprox.LANCZOS: create_low_rank_curvature,
     CurvApprox.LOBPCG: partial(
         create_low_rank_curvature, low_rank_method=LowRankMethod.LOBPCG
     ),
 }
 
-CURVATURE_PRIOR_METHODS: dict[CurvatureKeyType, Callable] = {
-    CurvApprox.FULL: full_with_prior,
-    CurvApprox.DIAGONAL: diag_with_prior,
-    CurvApprox.LOW_RANK: low_rank_with_prior,
-    CurvApprox.LOBPCG: low_rank_with_prior,
+CURVATURE_PRECISION_METHODS: dict[CurvatureKeyType, Callable] = {
+    CurvApprox.FULL: full_curvature_to_precision,
+    CurvApprox.DIAGONAL: diagonal_curvature_to_precision,
+    CurvApprox.LANCZOS: low_rank_curvature_to_precision,
+    CurvApprox.LOBPCG: low_rank_curvature_to_precision,
 }
 
 CURVATURE_TO_POSTERIOR_STATE: dict[CurvatureKeyType, Callable] = {
-    CurvApprox.FULL: full_prec_to_state,
-    CurvApprox.DIAGONAL: diag_prec_to_state,
-    CurvApprox.LOW_RANK: low_rank_prec_to_state,
-    CurvApprox.LOBPCG: low_rank_prec_to_state,
+    CurvApprox.FULL: full_prec_to_posterior_state,
+    CurvApprox.DIAGONAL: diagonal_prec_to_posterior_state,
+    CurvApprox.LANCZOS: low_rank_prec_to_posterior_state,
+    CurvApprox.LOBPCG: low_rank_prec_to_posterior_state,
 }
 
 CURVATURE_STATE_TO_SCALE: dict[CurvatureKeyType, Callable] = {
-    CurvApprox.FULL: full_state_to_scale,
-    CurvApprox.DIAGONAL: diag_state_to_scale,
-    CurvApprox.LOW_RANK: low_rank_state_to_scale,
-    CurvApprox.LOBPCG: low_rank_state_to_scale,
+    CurvApprox.FULL: full_posterior_state_to_scale,
+    CurvApprox.DIAGONAL: diagonal_posterior_state_to_scale,
+    CurvApprox.LANCZOS: low_rank_posterior_state_to_scale,
+    CurvApprox.LOBPCG: low_rank_posterior_state_to_scale,
 }
 
 CURVATURE_STATE_TO_COV: dict[CurvatureKeyType, Callable] = {
-    CurvApprox.FULL: full_state_to_cov,
-    CurvApprox.DIAGONAL: diag_state_to_cov,
-    CurvApprox.LOW_RANK: low_rank_state_to_cov,
-    CurvApprox.LOBPCG: low_rank_state_to_cov,
+    CurvApprox.FULL: full_posterior_state_to_cov,
+    CurvApprox.DIAGONAL: diagonal_posterior_state_to_cov,
+    CurvApprox.LANCZOS: low_rank_posterior_state_to_cov,
+    CurvApprox.LOBPCG: low_rank_posterior_state_to_cov,
 }
 
 
-def approximate_curvature(
-    curvature_type: CurvApprox | str,
+# ---------------------------------------------------------------------------------
+# General api for creating posterior functions
+# ---------------------------------------------------------------------------------
+
+
+@dataclass
+class Posterior:
+    state: PosteriorState
+    cov_mv: Callable[[PosteriorState], Callable[[FlatParams], FlatParams]]
+    scale_mv: Callable[[PosteriorState], Callable[[FlatParams], FlatParams]]
+
+
+def estimate_curvature(
+    curv_type: CurvApprox | str,
     mv: CurvatureMV,
     layout: Layout | None = None,
     **kwargs,
 ):
-    # Retrieve the curvature estimator based on the provided type
-    curv_estimate = CURVATURE_METHODS[curvature_type](mv, layout=layout, **kwargs)
+    """Estimate the curvature based on the provided type.
+
+    Args:
+        curv_type: Type of curvature approximation ('full', 'diagonal', 'lanczos',
+            'lobpcg').
+        mv: Function representing the curvature.
+        layout: Defines the format of the layout for matrix-vector products. If None or
+            an integer, no flattening/unflattening is used.
+        **kwargs: Additional key-word arguments passed to the curvature estimation
+            function.
+
+    Returns:
+        The estimated curvature.
+    """
+    curv_estimate = CURVATURE_METHODS[curv_type](mv, layout=layout, **kwargs)
 
     # Ignore lazy evaluation
     curv_estimate = jax.tree.map(
@@ -541,8 +571,21 @@ def approximate_curvature(
 
 
 def set_posterior_fn(
-    curv_type: CurvatureKeyType, curv_est: PyTree, *, layout: Layout, **kwargs
+    curv_type: CurvatureKeyType, curv_estimate: PyTree, *, layout: Layout, **kwargs
 ) -> Callable:
+    """Set the posterior function based on the curvature estimate.
+
+    Args:
+        curv_type: Type of curvature approximation. Options include ('full', 'diagonal',
+            'lanczos', 'lobpcg').
+        curv_estimate: Estimated curvature.
+        layout: Defines the format of the layout for matrix-vector products.
+        **kwargs: Additional key-word arguments (unused).
+
+    Returns:
+        A function that computes the posterior state.
+    """
+    del kwargs
     if layout is not None and not isinstance(layout, int | PyTree):
         msg = "Layout must be an integer, PyTree or None."
         raise ValueError(msg)
@@ -558,9 +601,9 @@ def set_posterior_fn(
         prior_arguments: PriorArguments,
         loss_scaling_factor: Float = 1.0,
     ) -> PosteriorState:
-        """Posterior function to compute covariance and scale-related functions.
+        """Compute the posterior state.
 
-        Parameters:
+        Args:
             prior_arguments: Prior arguments for the posterior.
             loss_scaling_factor: Factor by which the user-provided loss function is
                 scaled. Defaults to 1.0.
@@ -572,8 +615,8 @@ def set_posterior_fn(
                 - 'scale_mv': Function to compute scale matrix-vector product.
         """
         # Calculate posterior precision.
-        precision = CURVATURE_PRIOR_METHODS[curv_type](
-            curv_est=curv_est,
+        precision = CURVATURE_PRECISION_METHODS[curv_type](
+            curv_estimate=curv_estimate,
             prior_arguments=prior_arguments,
             loss_scaling_factor=loss_scaling_factor,
         )
@@ -594,123 +637,41 @@ def set_posterior_fn(
     return posterior_fn
 
 
-@dataclass
-class Posterior:
-    state: PosteriorState
-    cov_mv: Callable[[PosteriorState], Callable[[FlatParams], FlatParams]]
-    scale_mv: Callable[[PosteriorState], Callable[[FlatParams], FlatParams]]
-
-
 def create_posterior_fn(
-    curvature_type: CurvApprox | str,
+    curv_type: CurvApprox | str,
     mv: CurvatureMV,
     layout: Layout | None = None,
     **kwargs,
 ) -> Callable:
     """Factory function to create the posterior function given a curvature type.
 
-    This sets up the posterior_function which can then be initiated using
+    This sets up the posterior function which can then be initiated using
     prior_arguments by computing a specified curvature approximation and encoding the
-    sequential computational order of CURVATURE_PRIOR_METHODS,
-    CURVATURE_TO_POSTERIOR_STATE, CURVATURE_STATE_TO_SCALE, and CURVATURE_STATE_TO_COV.
-    All methods are selected from the corresponding dictionary by the curvature_type
-    argument. New methods can be registered using the register_curvature_method.
+    sequential computational order of:
+        1) CURVATURE_PRIOR_METHODS,
+        2) CURVATURE_TO_POSTERIOR_STATE,
+        3) CURVATURE_STATE_TO_SCALE, and
+        4) CURVATURE_STATE_TO_COV. All methods are selected from the corresponding
+    dictionary by the curv_type argument. New methods can be registered using the
+    register_curvature_method.
 
     Args:
-        curvature_type: Type of curvature approximation ('full', 'diagonal',
-            'low_rank').
+        curv_type: Type of curvature approximation ('full', 'diagonal',
+            'lanczos', 'lobpcg').
         mv: Function representing the curvature.
-        layout: Defines the format of the layout
-                for matrix-vector products. If None or an integer, no
-                flattening/unflattening is used.
-        **kwargs: Additional key-word arguments are only passed to the curvature
-            estimation function.
+        layout: Defines the format of the layout for matrix-vector products. If None or
+            an integer, no flattening/unflattening is used.
+        **kwargs: Additional key-word arguments passed to the curvature estimation
+            function.
 
     Returns:
         Callable: A posterior function that takes the prior_arguments and returns the
             posterior_state.
     """
-
     # Retrieve the curvature estimator based on the provided type
-    curv_estimate = approximate_curvature(
-        curvature_type, mv=mv, layout=layout, **kwargs
-    )
+    curv_estimate = estimate_curvature(curv_type, mv=mv, layout=layout, **kwargs)
 
     # Set posterior fn based on curv_estimate
-    posterior_fn = set_posterior_fn(curvature_type, curv_estimate, layout=layout)
+    posterior_fn = set_posterior_fn(curv_type, curv_estimate, layout=layout)
 
     return posterior_fn
-
-
-# ----------------------------------------------------------------------------------
-# Register new curvature methods
-# ----------------------------------------------------------------------------------
-
-
-def register_curvature_method(
-    name: str,
-    *,
-    create_fn: Callable[[CurvatureMV, Layout, Any], Any] | None = None,
-    prior_fn: Callable | None = None,
-    posterior_fn: Callable | None = None,
-    scale_fn: Callable[[PosteriorState], Callable[[FlatParams], FlatParams]]
-    | None = None,
-    cov_fn: Callable[[PosteriorState], Callable[[FlatParams], FlatParams]]
-    | None = None,
-    default: CurvApprox | None = None,
-) -> None:
-    """Register a new curvature method with optional custom functions.
-
-    This function allows adding new curvature methods with their corresponding
-    functions for creating curvature estimates, adding prior information,
-    computing posterior states, and deriving matrix-vector product functions
-    for scale and covariance.
-
-    Args:
-        name: Name of the new curvature method.
-        create_fn: Custom function to create the curvature
-            estimate. Defaults to None.
-        prior_fn: Custom function to incorporate prior
-            information. Defaults to None.
-        posterior_fn: Custom function to compute posterior
-            states. Defaults to None.
-        scale_fn: Custom function to compute scale
-            matrix-vector products. Defaults to None.
-        cov_fn: Custom function to compute covariance
-            matrix-vector products. Defaults to None.
-        default: Default method to inherit missing
-            functionality from. Defaults to None.
-
-    Raises:
-        ValueError: If no default is provided and required functions are missing.
-    """
-    # Check whether default is given
-    if default is None and not all((
-        create_fn,
-        prior_fn,
-        posterior_fn,
-        scale_fn,
-        cov_fn,
-    )):
-        missing_functions = [
-            fn_name
-            for fn_name, fn in zip(
-                ["create_fn", "prior_fn", "posterior_fn", "scale_fn", "cov_fn"],
-                [create_fn, prior_fn, posterior_fn, scale_fn, cov_fn],
-                strict=True,
-            )
-            if fn is None
-        ]
-        msg = (
-            "Either a default method must be provided or the following functions must "
-            f"be specified: {', '.join(missing_functions)}."
-        )
-        raise ValueError(msg)
-
-    CURVATURE_METHODS[name] = create_fn or CURVATURE_METHODS[default]
-    CURVATURE_PRIOR_METHODS[name] = prior_fn or CURVATURE_PRIOR_METHODS[default]
-    CURVATURE_TO_POSTERIOR_STATE[name] = (
-        posterior_fn or CURVATURE_TO_POSTERIOR_STATE[default]
-    )
-    CURVATURE_STATE_TO_SCALE[name] = scale_fn or CURVATURE_STATE_TO_SCALE[default]
-    CURVATURE_STATE_TO_COV[name] = cov_fn or CURVATURE_STATE_TO_COV[default]

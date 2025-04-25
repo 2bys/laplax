@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
 ]
-dependencies = ["jax", "jaxtyping", "loguru"]
+dependencies = ["jax", "jaxtyping", "loguru", "tqdm"]
 description = "Laplace approximations in JAX."
 dynamic = ["version"]
 keywords = [
@@ -48,10 +48,13 @@ dev = [
     "laplace-torch",
 ]
 notebooks = [
-    "torch",
-    "torchvision",
-    "optax",
-    "flax",
+    "torch", 
+    "torchvision", 
+    "optax", 
+    "flax", 
+    "pandas", 
+    "skerch", 
+    "ipywidgets",
 ]
 docs = [
     "mkdocs",
@@ -229,7 +232,7 @@ ignore = [
 
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/*.py" = ["S101"] # Use of assert is allowed in test files
-"*.ipynb" = ["T201"]  # Print statements are fine in notebooks
+"*.ipynb" = ["T201"] # Print statements are fine in notebooks
 
 [tool.ruff.lint.mccabe]
 max-complexity = 18

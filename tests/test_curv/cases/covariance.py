@@ -28,7 +28,7 @@ class CurvatureTask:
         key = jax.random.key(seed)
         keys = jax.random.split(key, 3)
         self.key_arr = keys[0]
-        self.key_curv_est = keys[1]
+        self.key_curv_estimate = keys[1]
 
         # Initialize task
         self.size = size
@@ -42,7 +42,7 @@ class CurvatureTask:
         self.u = u
         self.s = s
 
-    def adjust_curv_est(self, *args, **kwargs):
+    def adjust_curv_estimate(self, *args, **kwargs):
         raise NotImplementedError
 
     def adjust_prec(self, *args, **kwargs):
@@ -64,13 +64,13 @@ class CurvatureTask:
         return jax.numpy.ones((100,))
 
 
-class LowRankCurvatureTask(CurvatureTask):
-    method = "low_rank"
+class LANCZOSLowRankCurvatureTask(CurvatureTask):
+    method = "lanczos"
     atol = 1e-1
     rtol = 5e-2
 
     @staticmethod
-    def adjust_curv_est(low_rank_terms: dict):
+    def adjust_curv_estimate(low_rank_terms: dict):
         U = low_rank_terms.U
         S = low_rank_terms.S
         return U @ jnp.diag(S) @ U.T
@@ -90,7 +90,7 @@ class LowRankCurvatureTask(CurvatureTask):
         return jax.numpy.ones((100,))
 
 
-class LOBPCGLowRankCurvatureTask(LowRankCurvatureTask):
+class LOBPCGLowRankCurvatureTask(LANCZOSLowRankCurvatureTask):
     method = "lobpcg"
     atol = 1e-2
     rtol = 1e-2
@@ -100,8 +100,8 @@ class DiagonalCurvatureTask(CurvatureTask):
     method = "diagonal"
 
     @staticmethod
-    def adjust_curv_est(curv_est):
-        return jnp.diag(curv_est)
+    def adjust_curv_estimate(curv_estimate):
+        return jnp.diag(curv_estimate)
 
     @staticmethod
     def adjust_prec(prec):
@@ -116,8 +116,8 @@ class FullCurvatureTask(CurvatureTask):
     method = "full"
 
     @staticmethod
-    def adjust_curv_est(curv_est):
-        return curv_est
+    def adjust_curv_estimate(curv_estimate):
+        return curv_estimate
 
     @staticmethod
     def adjust_prec(prec):
@@ -131,7 +131,7 @@ class FullCurvatureTask(CurvatureTask):
 @pytest_cases.parametrize(
     "task_class",
     [
-        LowRankCurvatureTask,
+        LANCZOSLowRankCurvatureTask,
         LOBPCGLowRankCurvatureTask,
         DiagonalCurvatureTask,
         FullCurvatureTask,

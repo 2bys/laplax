@@ -147,7 +147,7 @@ def lobpcg_standard(
 
     @jax.jit
     def _iteration_second_step(X, R, theta, AX, n, tol):
-        # # Compute new residuals.
+        # Compute new residuals.
         # AX = A(X)
         R = AX - theta[jnp.newaxis, :k] * X
         resid_norms = jnp.linalg.norm(R, ord=2, axis=0)
@@ -270,9 +270,9 @@ def lobpcg_lowrank(
     layout: Layout | None = None,
     rank: int = 20,
     tol: float = 1e-6,
-    mv_dtype: DType = jnp.float32,
+    mv_dtype: DType | None = None,
     calc_dtype: DType = jnp.float64,
-    return_dtype: DType = jnp.float32,
+    return_dtype: DType | None = None,
     mv_jittable: bool = True,
     **kwargs,
 ) -> LowRankTerms:
@@ -333,6 +333,17 @@ def lobpcg_lowrank(
     """
     del kwargs
 
+    # Initialize handling mixed precision.
+    original_float64_enabled = jax.config.read("jax_enable_x64")
+
+    if mv_dtype is None:
+        mv_dtype = jnp.float64 if original_float64_enabled else jnp.float32
+
+    if return_dtype is None:
+        return_dtype = jnp.float64 if original_float64_enabled else jnp.float32
+
+    jax.config.update("jax_enable_x64", calc_dtype == jnp.float64)
+
     # Obtain a matrix-vector multiplication function.
     matvec, size = get_matvec(A, layout=layout, jit=mv_jittable)
 
@@ -344,11 +355,6 @@ def lobpcg_lowrank(
         rank = max(1, size // 5 - 1)
         msg = f"reduced rank to {rank} due to insufficient size"
         warnings.warn(msg, stacklevel=1)
-
-    # Initialize handling mixed precision.
-    is_compute_in_float64 = jax.config.read("jax_enable_x64")
-    if jnp.float64 in {mv_dtype, calc_dtype, return_dtype}:
-        jax.config.update("jax_enable_x64", True)
 
     # Wrap to_dtype around mv if necessary.
     if mv_dtype != calc_dtype:
@@ -368,7 +374,7 @@ def lobpcg_lowrank(
         m=rank,
         tol=tol,
         calc_dtype=calc_dtype,
-        a_dtype=mv_dtype,
+        a_dtype=mv_dtype,  # type: ignore  # noqa: PGH003 # TODO(2bys): Fix this.
         A_jittable=mv_jittable,
     )
 
@@ -380,6 +386,6 @@ def lobpcg_lowrank(
     )
 
     # Restore the original configuration dtype
-    jax.config.update("jax_enable_x64", is_compute_in_float64)
+    jax.config.update("jax_enable_x64", original_float64_enabled)
 
     return low_rank_result

@@ -54,7 +54,6 @@ def test_eval_metrics(curv_op, task):
         num_samples=5,  # TODO(2bys): Find a better way of setting this.
     )
 
-    # results = jax.vmap(pushforward)(data["input"])
     results_metrics_dict = evaluate_metrics_on_dataset(
         pushforward,
         data,
@@ -68,7 +67,7 @@ def test_eval_metrics(curv_op, task):
 
     # Check metrics are positive
     assert all(results_metrics["rmse"] > 0)
-    assert all(results_metrics["q"] > 0)
+    assert all(results_metrics["chi^2"] > 0)
 
     # Check shapes match within each dict
     comparison = next(iter(results_metrics.values())).shape
@@ -76,6 +75,6 @@ def test_eval_metrics(curv_op, task):
 
     # Check metrics match between both approaches
     assert jnp.allclose(results_metrics["rmse"], results_metrics_dict["rmse"])
-    assert jnp.allclose(results_metrics["q"], results_metrics_dict["q"])
+    assert jnp.allclose(results_metrics["chi^2"], results_metrics_dict["chi^2"])
     assert jnp.allclose(results_metrics["nll"], results_metrics_dict["nll"])
     assert jnp.allclose(results_metrics["crps"], results_metrics_dict["crps"])

@@ -14,6 +14,7 @@ def lanczos_iterations(
     tol: Float = 1e-6,
     full_reorthogonalize: bool = True,
     dtype: DType = jnp.float64,
+    mv_jittable: bool = True,
 ) -> tuple[Array, Array, Array]:
     """Runs Lanczos iterations starting from vector b.
 
@@ -24,6 +25,11 @@ def lanczos_iterations(
         tol: Tolerance to detect convergence.
         full_reorthogonalize: If True, reorthogonalize at every step.
         dtype: Data type for the Lanczos scalars/vectors.
+        mv_jittable: If True, uses jax.lax.scan for iterations; if False, uses a plain
+          Python for loop. Note that jax.lax.scan can cause problems if, under the hood,
+          the matvec generates a large computational graph (which could be the case if,
+          for example, it's defined as a sum over per-datum curvatures using a
+          dataloader.) In such cases `mv_jittable` should be set to False.
 
     Returns:
         alpha: 1D array of Lanczos scalars (diagonal of T).
@@ -46,14 +52,14 @@ def lanczos_iterations(
 
         return jax.lax.fori_loop(0, i, body_fn, w)
 
-    def _body_fn(carry, i):
-        v, alpha, beta, V = carry
-        w = matvec(v)
+    # Define a single iteration function to be used in both cases
+    @jax.jit
+    def iteration_step(v, w, alpha, beta, V, i):
         a = jnp.dot(v, w)
         w = w - a * v
         if full_reorthogonalize:
             w = reorthogonalize(w, V, i)
-            # w = reorthogonalize(w, V, i)
+            w = reorthogonalize(w, V, i)
 
         b_val = jnp.linalg.norm(w, 2)
         b_val = jnp.where(b_val < tol, 0.0, b_val)
@@ -66,11 +72,26 @@ def lanczos_iterations(
         alpha = alpha.at[i].set(a)
         beta = beta.at[i].set(b_val)
         V = V.at[i + 1].set(v_next)
+        return v_next, alpha, beta, V
+
+    def _body_fn(carry, i):
+        v, alpha, beta, V = carry
+        w = matvec(v)
+        v_next, alpha, beta, V = iteration_step(v, w, alpha, beta, V, i)
         return (v_next, alpha, beta, V), None
 
-    init_carry = (v0, alpha, beta, V)
-    indices = jnp.arange(maxiter)
-    (_, alpha, beta, V), _ = jax.lax.scan(_body_fn, init_carry, indices)
+    if mv_jittable:
+        # Use lax.scan implementation (compilable)
+        init_carry = (v0, alpha, beta, V)
+        indices = jnp.arange(maxiter)
+        (_, alpha, beta, V), _ = jax.lax.scan(_body_fn, init_carry, indices)
+    else:
+        # Use Python loop implementation (not compilable)
+        v = v0
+        for i in range(maxiter):
+            w = matvec(v)
+            v, alpha, beta, V = iteration_step(v, w, alpha, beta, V, i)
+
     return alpha, beta, V
 
 
@@ -126,7 +147,7 @@ def lanczos_lowrank(
     layout: Layout | None = None,
     rank: int = 20,
     tol: float = 1e-6,
-    mv_dtype: DType = jnp.float32,
+    mv_dtype: DType | None = None,
     calc_dtype: DType = jnp.float64,
     return_dtype: DType | None = None,
     mv_jittable: bool = True,
@@ -144,7 +165,9 @@ def lanczos_lowrank(
         mv_dtype: Data type for matrix-vector products.
         calc_dtype: Data type for internal calculations.
         return_dtype: Data type for returned results.
-        mv_jittable: If True, enables JIT compilation of matrix-vector products.
+        mv_jittable: If True, enables JIT compilation of matrix-vector products. Note
+          that this can cause problems if the matrix-vector product generates a large
+          computational graph.
         full_reorthogonalize: Whether to perform full reorthogonalization.
         **kwargs: Additional arguments (ignored).
 
@@ -156,17 +179,19 @@ def lanczos_lowrank(
     """
     del kwargs
 
+    # Initialize handling mixed precision.
+    original_float64_enabled = jax.config.read("jax_enable_x64")
+
+    if mv_dtype is None:
+        mv_dtype = jnp.float64 if original_float64_enabled else jnp.float32
+
+    if return_dtype is None:
+        return_dtype = jnp.float64 if original_float64_enabled else jnp.float32
+
+    jax.config.update("jax_enable_x64", calc_dtype == jnp.float64)
+
     # Obtain a uniform matrix-vector multiplication function.
     matvec, size = get_matvec(A, layout=layout, jit=mv_jittable)
-
-    # Initialize handling mixed precision.
-    is_compute_in_float64 = jax.config.read("jax_enable_x64")
-    if jnp.float64 in {mv_dtype, calc_dtype, return_dtype}:
-        jax.config.update("jax_enable_x64", True)
-
-    # Infer return_dtype.
-    if return_dtype is None:
-        return_dtype = jnp.float64 if is_compute_in_float64 else jnp.float32
 
     # Wrap to_dtype around mv if necessary.
     if mv_dtype != calc_dtype:
@@ -181,7 +206,12 @@ def lanczos_lowrank(
 
     # Run Lanczos iterations.
     alpha, beta, V = lanczos_iterations(
-        matvec, b, maxiter=rank, tol=tol, full_reorthogonalize=full_reorthogonalize
+        matvec,
+        b,
+        maxiter=rank,
+        tol=tol,
+        full_reorthogonalize=full_reorthogonalize,
+        mv_jittable=mv_jittable,
     )
     eigvals, eigvecs = compute_eigendecomposition(alpha, beta, V, compute_vectors=True)
 
@@ -193,5 +223,5 @@ def lanczos_lowrank(
     )
 
     # Restore the original configuration dtype
-    jax.config.update("jax_enable_x64", is_compute_in_float64)
+    jax.config.update("jax_enable_x64", original_float64_enabled)
     return low_rank_result

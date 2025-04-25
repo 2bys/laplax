@@ -196,21 +196,19 @@ def transfer_entry(
     if isinstance(mapping, list):
         mapping = {k: k for k in mapping}
 
+    # Check if field and access_from are valid
+    dict_options = ("results", "aux")
+    if field not in dict_options or access_from not in dict_options:
+        msg = f"Field {field} must be either 'results' or 'aux'."
+        raise ValueError(msg)
+
     # Transfer the entry
     def transfer(results, aux, **kwargs):
         del kwargs
         options = {"results": results, "aux": aux}
-        if field == "results":
-            for k, v in mapping.items():
-                results[k] = options[access_from][v]
-        elif field == "aux":
-            for k, v in mapping.items():
-                aux[k] = options[access_from][v]
-        else:
-            msg = f"Field {field} must be either 'results' or 'aux'."
-            raise ValueError(msg)
-
-        return results, aux
+        for k, v in mapping.items():
+            options[field][k] = options[access_from][v]
+        return options["results"], options["aux"]
 
     return transfer
 

@@ -5,6 +5,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+from tqdm import tqdm
 
 from laplax.types import Any, Array, Callable, Data, Iterable, Layout, PyTree
 from laplax.util.flatten import wrap_function
@@ -151,6 +152,7 @@ def process_batches(
     transform: Callable,
     reduce: Callable,
     *args,
+    verbose_logging: bool = False,
     **kwargs,
 ) -> Any:
     """Process batches of data using a function, transformation, and reduction.
@@ -161,6 +163,7 @@ def process_batches(
         transform: A callable that transforms each batch into the desired format.
         reduce: A callable that reduces results across batches.
         *args: Additional positional arguments for the processing function.
+        verbose_logging: Whether to log progress using tqdm (default: False).
         **kwargs: Additional keyword arguments for the processing function.
 
     Returns:
@@ -171,7 +174,9 @@ def process_batches(
     """
     state = None
     result = None
-    for batch in data_loader:
+    for batch in tqdm(
+        data_loader, desc="Processing batches", disable=not verbose_logging
+    ):
         result = function(*args, data=transform(batch), **kwargs)
         result, state = reduce(result, state)
     if result is None:
@@ -258,6 +263,8 @@ class DataLoaderMV:
         loader: Iterable,
         transform: Callable = input_target_split,
         reduce: Callable = reduce_online_mean,
+        *,
+        verbose_logging: bool = False,
         **kwargs,
     ) -> None:
         """Initialize the DataLoaderMV object.
@@ -269,6 +276,7 @@ class DataLoaderMV:
                 (default: `input_target_split`).
             reduce: A callable to reduce results across batches
                 (default: `reduce_online_mean`).
+            verbose_logging: Whether to log progress using tqdm (default: False).
             **kwargs: Additional keyword arguments (currently unused).
         """
         del kwargs
@@ -278,6 +286,7 @@ class DataLoaderMV:
         self.reduce = reduce
         self.input_transform = identity
         self.output_transform = identity
+        self.verbose_logging = verbose_logging
 
     def __call__(self, vec: Array) -> Array | PyTree:
         """Process the input vector using the data loader and return the result.
@@ -295,6 +304,7 @@ class DataLoaderMV:
                 transform=self.transform,
                 reduce=self.reduce,
                 vec=self.input_transform(vec),
+                verbose_logging=self.verbose_logging,
             )
         )
 
@@ -314,21 +324,21 @@ class DataLoaderMV:
                 wrap_function(
                     partial(self.mv, data=data),
                     input_fn=self.input_transform,
+                    output_fn=self.output_transform,
                 ),
                 **kwargs,
             )
 
-        return self.output_transform(
-            process_batches(
-                _body_fn,
-                self.loader,
-                transform=self.transform,
-                reduce=self.reduce,
-            )
+        return process_batches(
+            _body_fn,
+            self.loader,
+            transform=self.transform,
+            reduce=self.reduce,
+            verbose_logging=self.verbose_logging,
         )
 
 
-@to_dense.register(DataLoaderMV)
+@to_dense.register
 def _(mv: DataLoaderMV, layout: Layout, **kwargs) -> Array:
     """Apply to_dense to DataLoaderMV."""
     return mv.lower_func(to_dense, layout=layout, **kwargs)
@@ -357,7 +367,9 @@ def _(
         output_fn=output_fn,
     )
 
-    new_mv = DataLoaderMV(mv.mv, mv.loader, mv.transform, mv.reduce)
+    new_mv = DataLoaderMV(
+        mv.mv, mv.loader, mv.transform, mv.reduce, verbose_logging=mv.verbose_logging
+    )
     new_mv.input_transform = new_input_transform
     new_mv.output_transform = new_output_transform
 

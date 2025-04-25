@@ -24,17 +24,43 @@ from laplax.util.tree import mul
 # ---------------------------------------------------------------------
 
 
+def _binary_cross_entropy_hessian_mv(
+    jv: PredArray, pred: PredArray, **kwargs
+) -> Num[Array, "..."]:
+    r"""Compute the Hessian-vector product for the binary cross-entropy loss.
+
+    This calculation uses the predicted sigmoid probabilities to compute the
+    1x1 Hessian. The result is the product of the predicted probabilities for the
+    positive and the negative class.
+
+    Mathematically, the Hessian-vector product is computed as:
+    $H \cdot jv = p(1-p) \cdot jv,$
+    where $p = \text{sigmoid}(\text{pred})$.
+
+    Args:
+        jv: Vector to multiply with the Hessian.
+        pred: Model predictions (logits).
+        **kwargs: Additional arguments (ignored).
+
+    Returns:
+        Hessian-vector product for cross-entropy loss.
+    """
+    del kwargs
+    prob = jax.nn.sigmoid(pred)
+    return prob * (1 - prob) * jv
+
+
 def _cross_entropy_hessian_mv(
     jv: PredArray, pred: PredArray, **kwargs
 ) -> Num[Array, "..."]:
-    r"""Compute the Hessian-vector product for cross-entropy loss.
+    r"""Compute the Hessian-vector product for the cross-entropy loss.
 
-    This calculation uses the softmax probabilities of the predictions to compute the
+    This calculation uses the predicted softmax probabilities to compute the
     diagonal and off-diagonal components of the Hessian. The result is the difference
     between the diagonal contribution and the off-diagonal contribution of the Hessian.
 
     Mathematically, the Hessian-vector product is computed as:
-    $H \cdot jv = \text{diag}(p) \cdot jv - p \cdot (p^\top \cdot jv), $ s
+    $H \cdot jv = \text{diag}(p) \cdot jv - p \cdot (p^\top \cdot jv),$
     where $p = \text{softmax}(\text{pred})$.
 
     Args:
@@ -93,7 +119,10 @@ def create_loss_hessian_mv(
     Returns:
         A function that computes the Hessian-vector product for the given loss function.
     """
-    if loss_fn == LossFn.CROSSENTROPY:
+    if loss_fn == LossFn.BINARY_CROSS_ENTROPY:
+        return _binary_cross_entropy_hessian_mv
+
+    if loss_fn == LossFn.CROSS_ENTROPY:
         return _cross_entropy_hessian_mv
 
     if loss_fn == LossFn.MSE:
@@ -126,7 +155,7 @@ def create_ggn_mv_without_data(
     model_fn: ModelFn,
     params: Params,
     loss_fn: LossFn | str | Callable,
-    factor=Float,
+    factor: Float,
     *,
     has_batch: bool = True,
 ) -> Callable[[Params, Data], Params]:

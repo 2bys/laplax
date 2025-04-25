@@ -18,7 +18,7 @@ DEFAULT_CASE_LIST = [case_regression]
 
 @pytest_cases.parametrize(
     "curv_op",
-    [CurvApprox.FULL, CurvApprox.DIAGONAL, CurvApprox.LOW_RANK],
+    [CurvApprox.FULL, CurvApprox.DIAGONAL, CurvApprox.LANCZOS],
 )
 @pytest_cases.parametrize_with_cases("task", cases=DEFAULT_CASE_LIST)
 def test_nonlin_pushforward(curv_op, task):
@@ -67,7 +67,7 @@ def test_nonlin_pushforward(curv_op, task):
 
 @pytest_cases.parametrize(
     "curv_op",
-    [CurvApprox.FULL, CurvApprox.DIAGONAL, CurvApprox.LOW_RANK],
+    [CurvApprox.FULL, CurvApprox.DIAGONAL, CurvApprox.LANCZOS],
 )
 @pytest_cases.parametrize_with_cases("task", cases=DEFAULT_CASE_LIST)
 def test_lin_pushforward(curv_op, task):
