@@ -1,7 +1,7 @@
 """Matrix-free array operations for matrix-vector products."""
 
 from collections.abc import Callable
-
+# from functools import singledispatch
 import jax
 import jax.numpy as jnp
 
@@ -15,7 +15,14 @@ from laplax.util.tree import (
 )
 
 
-def diagonal(mv: Callable | jnp.ndarray, layout: Layout | None = None) -> Array:
+# @singledispatch
+def diagonal(
+    mv: Callable | jnp.ndarray,
+    layout: Layout | None = None,
+    *,
+    mv_jittable: bool = True,
+    **kwargs,
+) -> Array:
     """Compute the diagonal of a matrix represented by a matrix-vector product function.
 
     This function extracts the diagonal of a matrix using basis vectors and a
@@ -31,6 +38,9 @@ def diagonal(mv: Callable | jnp.ndarray, layout: Layout | None = None) -> Array:
             - PyTree: A structure to generate basis vectors matching the matrix
                 dimensions.
             - None: If `mv` is a dense matrix.
+        mv_jittable: Whether to JIT compile the basis vector generator.
+        **kwargs:
+            diagonal_batch_size: Batch size for applying the MVP function.
 
     Returns:
         jax.Array: An array representing the diagonal of the matrix.
@@ -61,10 +71,15 @@ def diagonal(mv: Callable | jnp.ndarray, layout: Layout | None = None) -> Array:
         def get_basis_vec(idx: int) -> PyTree:
             return basis_vector_from_index(idx, layout)
 
-    # Compute the diagonal using basis vectors
-    return jnp.stack([
-        util.tree.tree_vec_get(mv(get_basis_vec(i)), i) for i in range(size)
-    ])
+    def diag_elem(i):
+        return util.tree.tree_vec_get(mv(get_basis_vec(i)), i)
+
+    if mv_jittable:
+        diag_elem = jax.jit(diag_elem)
+
+    return jax.lax.map(
+        diag_elem, jnp.arange(size), batch_size=kwargs.get("diagonal_batch_size")
+    )
 
 
 def todense(mv: Callable, layout: Layout, **kwargs) -> Array:
@@ -100,3 +115,4 @@ def todense(mv: Callable, layout: Layout, **kwargs) -> Array:
     return jax.tree.map(
         jnp.transpose, lmap(mv, identity, batch_size=kwargs.get("lmap_dense", "mv"))
     )  # Lmap shares along the first axis (rows instead of columns).
+

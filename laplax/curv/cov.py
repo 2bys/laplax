@@ -108,9 +108,9 @@ def prec_to_scale(prec: Num[Array, "P P"]) -> Num[Array, "P P"]:
     """
     Lf = jnp.linalg.cholesky(jnp.flip(prec, axis=(-2, -1)))
 
-    if jnp.any(jnp.isnan(Lf)):
-        msg = "matrix is not positive definite"
-        raise ValueError(msg)
+    #if jnp.any(jnp.isnan(Lf)):
+    #    msg = "matrix is not positive definite"
+    #    raise ValueError(msg)
 
     L_inv = jnp.transpose(jnp.flip(Lf, axis=(-2, -1)), axes=(-2, -1))
     Id = jnp.eye(prec.shape[-1], dtype=prec.dtype)

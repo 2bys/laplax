@@ -83,7 +83,7 @@ def evaluate_for_given_prior_arguments(
 def grid_search(
     interval: Array,
     objective: Callable[[PriorArguments], float],
-    patience: int = 5,
+    patience: int = 200,
     max_iterations: int | None = None,
     value_key: str = "prior_prec",
     prior_arguments: dict[str, Array] | dict = EMPTY_DICT,
